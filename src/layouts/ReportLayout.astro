@@ -1,0 +1,120 @@
+---
+import '../styles/report.css';
+
+export interface NavPage {
+  title: string;
+  route: string;
+  current?: boolean;
+}
+
+export interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+export interface Props {
+  title: string;
+  reportTitle?: string;
+  pages?: NavPage[];
+  headings?: Heading[];
+  author?: string;
+  buildTime?: string;
+  colorMode?: 'auto' | 'light' | 'dark';
+}
+
+const {
+  title,
+  reportTitle,
+  pages = [],
+  headings = [],
+  author,
+  buildTime,
+  colorMode = 'auto',
+} = Astro.props;
+
+const footerPrefix = author ? `Made by ${author} with Briefkit` : 'Made with Briefkit';
+const hasPageNav = pages.length > 1;
+const hasToc = headings.length > 0;
+---
+
+<!doctype html>
+<html lang="en" data-bk-theme={colorMode}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{reportTitle && reportTitle !== title ? `${title} · ${reportTitle}` : title}</title>
+  </head>
+  <body>
+    <script is:inline>
+      (() => {
+        const storageKey = 'briefkit-theme';
+        const stored = localStorage.getItem(storageKey);
+        if (stored === 'light' || stored === 'dark' || stored === 'auto') {
+          document.documentElement.dataset.bkTheme = stored;
+        }
+      })();
+    </script>
+    <div class="bk-shell">
+      <header class="bk-header">
+        <div>
+          {reportTitle && reportTitle !== title && <div class="bk-report-title">{reportTitle}</div>}
+          <h1>{title}</h1>
+        </div>
+        <div class="bk-theme-toggle" aria-label="Color mode">
+          <button type="button" data-bk-theme-button="light">Light</button>
+          <button type="button" data-bk-theme-button="dark">Dark</button>
+          <button type="button" data-bk-theme-button="auto">Auto</button>
+        </div>
+      </header>
+
+      <div class="bk-layout">
+        <main class="bk-content">
+          <slot />
+        </main>
+
+        {(hasPageNav || hasToc) && (
+          <aside class="bk-sidebar" aria-label="Report navigation">
+            {hasPageNav && (
+              <nav class="bk-nav" aria-label="Pages">
+                <h2>Pages</h2>
+                <ul>
+                  {pages.map((page) => (
+                    <li><a aria-current={page.current ? 'page' : undefined} href={page.route}>{page.title}</a></li>
+                  ))}
+                </ul>
+              </nav>
+            )}
+            {hasToc && (
+              <nav class="bk-nav" aria-label="On this page">
+                <h2>On this page</h2>
+                <ul>
+                  {headings.map((heading) => (
+                    <li class={`bk-toc-depth-${heading.depth}`}><a href={`#${heading.slug}`}>{heading.text}</a></li>
+                  ))}
+                </ul>
+              </nav>
+            )}
+          </aside>
+        )}
+      </div>
+
+      <footer class="bk-footer">{footerPrefix} | {buildTime}</footer>
+    </div>
+    <script is:inline>
+      (() => {
+        const storageKey = 'briefkit-theme';
+        const buttons = [...document.querySelectorAll('[data-bk-theme-button]')];
+        const apply = (mode) => {
+          document.documentElement.dataset.bkTheme = mode;
+          localStorage.setItem(storageKey, mode);
+          buttons.forEach((button) => {
+            button.toggleAttribute('aria-pressed', button.dataset.bkThemeButton === mode);
+          });
+        };
+        apply(document.documentElement.dataset.bkTheme || 'auto');
+        buttons.forEach((button) => button.addEventListener('click', () => apply(button.dataset.bkThemeButton)));
+      })();
+    </script>
+  </body>
+</html>

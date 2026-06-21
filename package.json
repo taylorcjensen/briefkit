@@ -1,0 +1,38 @@
+{
+  "name": "briefkit",
+  "version": "0.1.0",
+  "description": "Static MDX report-site toolkit for fast agent-authored briefs.",
+  "type": "module",
+  "bin": {
+    "briefkit": "./bin/briefkit.js"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles/report.css"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck",
+    "briefkit": "node ./bin/briefkit.js"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^4.3.0",
+    "astro": "^5.15.4",
+    "gray-matter": "^4.0.3",
+    "tsx": "^4.20.5",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

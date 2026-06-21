@@ -1,0 +1,65 @@
+---
+export interface Column {
+  key: string;
+  label: string;
+}
+
+export interface Props {
+  caption?: string;
+  columns?: Column[];
+  rows?: Record<string, unknown>[];
+  stickyHeader?: boolean;
+  stickyFirstColumn?: boolean;
+  class?: string;
+}
+
+const {
+  caption,
+  columns,
+  rows,
+  stickyHeader = true,
+  stickyFirstColumn = false,
+  class: className,
+} = Astro.props;
+
+const hasData = Boolean(columns?.length || rows?.length);
+const hasCompleteData = Boolean(columns?.length && rows);
+
+if (hasData && !hasCompleteData) {
+  throw new Error('BriefTable data mode requires both columns and rows.');
+}
+---
+
+<div
+  class:list={[
+    'bk-table-wrap',
+    stickyHeader && 'bk-table-sticky-header',
+    stickyFirstColumn && 'bk-table-sticky-first-column',
+    className,
+  ]}
+>
+  {hasCompleteData ? (
+    <table class="bk-table">
+      {caption && <caption>{caption}</caption>}
+      <thead>
+        <tr>{columns!.map((column) => <th scope="col">{column.label}</th>)}</tr>
+      </thead>
+      <tbody>
+        {rows!.map((row) => (
+          <tr>
+            {columns!.map((column, index) => (
+              index === 0 && stickyFirstColumn
+                ? <th scope="row">{String(row[column.key] ?? '')}</th>
+                : <td>{String(row[column.key] ?? '')}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  ) : (
+    <>
+      {caption && <div class="bk-table-caption">{caption}</div>}
+      <slot />
+    </>
+  )}
+</div>

@@ -1,0 +1,12 @@
+---
+export interface Props {
+  term: string;
+}
+
+const { term } = Astro.props;
+---
+
+<span class="bk-tooltip" tabindex="0">
+  {term}
+  <span class="bk-tooltip-panel" role="tooltip"><slot /></span>
+</span>
