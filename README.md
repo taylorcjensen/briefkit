@@ -4,6 +4,10 @@ Briefkit is a lightweight pattern for turning AI research into local, static, de
 
 It is not an agent framework, dashboard backend, or structured-data prison. The goal is simple: preserve nuanced analysis while reusing a consistent report shell, dense table style, navigation, glossary hover behavior, and source/risk/decision sections.
 
+## Design notes
+
+The evolving Astro/MDX toolkit design lives in [`docs/design.md`](docs/design.md).
+
 ## Current example
 
 A copy of the current Skyrim modlist comparison site lives at:
@@ -191,16 +195,15 @@ Key CSS class:
 
 ## Future direction
 
-A better Briefkit could become an Astro/MDX toolkit:
+Briefkit is expected to become an Astro/MDX toolkit with one shared installed core and many local throwaway report folders.
 
-```text
-briefkit/
-  src/layouts/ReportLayout.astro
-  src/components/Verdict.astro
-  src/components/RiskRegister.astro
-  src/components/EvidenceTable.astro
-  src/components/Tooltip.astro
-  src/content/reports/*.mdx
-```
+Initial core primitives should stay small:
 
-But the important design decision is that the body should remain flexible. The toolkit should provide reusable modules and styling, not force every report into rigid JSON.
+- `ReportLayout`
+- `Callout`
+- `Tooltip`
+- `BriefTable`
+
+Report structures such as verdicts, risk registers, source notes, facts tables, score matrices, and decision rules should be patterns built from those primitives rather than rigid schemas.
+
+The important design decision is that the body should remain flexible. The toolkit should provide reusable modules and styling, not force every report into rigid JSON.
