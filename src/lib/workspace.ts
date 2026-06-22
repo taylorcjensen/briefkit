@@ -252,7 +252,24 @@ import { ReportLayout } from 'briefkit';
 import Content from ${JSON.stringify(pagePath)};
 import reportData from ${JSON.stringify(relativeDataImport(page.route))};
 const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
-const navPages = reportData.pages.map((page) => ({ title: page.title, route: page.route, current: page.file === ${JSON.stringify(pageKey)} }));
+const navPages = reportData.pages.map((page) => ({ title: page.title, route: relativePageHref(currentPage.route, page.route), current: page.file === ${JSON.stringify(pageKey)} }));
+function relativePageHref(fromRoute, toRoute) {
+  if (fromRoute === toRoute) return './';
+  const edgeSlashes = new RegExp('^/+|/+$', 'g');
+  const fromParts = fromRoute.replace(edgeSlashes, '').split('/').filter(Boolean);
+  const toParts = toRoute.replace(edgeSlashes, '').split('/').filter(Boolean);
+  const commonLength = firstDifferentIndex(fromParts, toParts);
+  const up = '../'.repeat(Math.max(0, fromParts.length - commonLength));
+  const down = toParts.slice(commonLength).join('/');
+  return up + down + (down ? '/' : '') || './';
+}
+function firstDifferentIndex(left, right) {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return index;
+  }
+  return length;
+}
 ---
 <ReportLayout
   title={currentPage.title}

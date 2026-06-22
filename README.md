@@ -340,7 +340,7 @@ The generated site includes the README at `/` and the design notes at `/design/`
 
 ## Design notes
 
-The detailed design record is included as a second Briefkit page: [Design notes](/design/).
+The detailed design record is included as a second Briefkit page: [Design notes](design/).
 
 ## License
 
