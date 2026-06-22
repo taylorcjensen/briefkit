@@ -1,6 +1,6 @@
 {
   "name": "briefkit",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Static Markdown/MDX report-site toolkit for fast agent-authored briefs.",
   "keywords": [
     "agent",
@@ -21,7 +21,7 @@
   },
   "type": "module",
   "bin": {
-    "briefkit": "./bin/briefkit.js"
+    "briefkit": "bin/briefkit.js"
   },
   "exports": {
     ".": "./src/index.ts",
