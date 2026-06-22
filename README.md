@@ -32,7 +32,14 @@ briefkit build /path/to/report
 
 ## Report folder shape
 
-Minimum report:
+Minimum Markdown report:
+
+```text
+my-report/
+  README.md
+```
+
+Minimum MDX report:
 
 ```text
 my-report/
@@ -43,12 +50,19 @@ Optional structure:
 
 ```text
 my-report/
+  README.md
   index.mdx
-  pages/**/*.mdx
+  pages/**/*.{md,mdx}
   components/**/*.{astro,tsx,jsx}
   data/**/*.{json,yaml,yml,csv}
   public/**/*
   briefkit.config.{ts,js,mjs}
+```
+
+Root page priority is:
+
+```text
+index.mdx > index.md > README.mdx > README.md
 ```
 
 Example config:
@@ -63,6 +77,33 @@ export default {
   ],
 };
 ```
+
+## Markdown quick start
+
+A plain `README.md` works as a complete Briefkit report:
+
+```md
+# Vendor Decision Brief
+
+## Verdict
+
+Pick Option A if you need the lowest maintenance path.
+
+## Comparison
+
+| Option | Best for | Caveat |
+|---|---|---|
+| A | Fast decisions | Less customizable |
+| B | Deep analysis | More work |
+```
+
+Run it with:
+
+```bash
+briefkit dev /path/to/report
+```
+
+Briefkit automatically upgrades ordinary Markdown tables with shared table styling, sticky headers, and content-aware column widths. Use Markdown when portability and speed matter; use MDX when you need Briefkit components, local components, or imported data.
 
 ## MDX authoring
 
@@ -102,6 +143,18 @@ Briefkit v0 intentionally keeps the primitive set small:
 Patterns such as verdicts, source notes, facts tables, risk registers, score matrices, and decision rules should be built from those primitives instead of becoming rigid schemas.
 
 ## Examples
+
+### README Markdown report
+
+```text
+examples/readme-report/
+```
+
+Build it with:
+
+```bash
+npm run briefkit -- build examples/readme-report
+```
 
 ### Astro/MDX prototype
 

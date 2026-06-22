@@ -47,7 +47,7 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
     })),
   });
 
-  await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir), 'utf8');
+  await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir), 'utf8');
 
   for (const page of report.pages) {
     await writeProcessedPage(workspaceDir, page);
@@ -64,9 +64,10 @@ function workspacePath(reportDir: string, port?: number): string {
   return path.join(os.tmpdir(), 'briefkit', `${slug}-${hash}${suffix}`);
 }
 
-function astroConfig(reportDir: string, outDir: string): string {
+function astroConfig(reportDir: string, outDir: string, workspaceDir: string): string {
   const packageRoot = path.resolve(path.join(import.meta.dirname, '..', '..'));
   const publicDir = path.join(reportDir, 'public');
+  const cacheDir = path.join(workspaceDir, '.astro');
   return `import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
 import path from 'node:path';
@@ -87,6 +88,7 @@ export default defineConfig({
   output: 'static',
   outDir: ${JSON.stringify(outDir)},
   publicDir: ${JSON.stringify(publicDir)},
+  cacheDir: ${JSON.stringify(cacheDir)},
   devToolbar: { enabled: false },
   markdown: { rehypePlugins: [briefkitTables] },
   integrations: [mdx()],
@@ -123,7 +125,8 @@ function routeToWrapperPath(workspaceDir: string, route: string): string {
 async function writeProcessedPage(workspaceDir: string, page: PageInfo): Promise<void> {
   const source = await fs.readFile(page.absolutePath, 'utf8');
   const parsed = matter(source);
-  const normalizedContent = normalizeSlashSpacingInMdx(injectHtmlTableColgroups(parsed.content));
+  const contentWithoutDuplicateTitle = removeDuplicateTitleHeading(parsed.content, page.title);
+  const normalizedContent = normalizeSlashSpacingInMdx(injectHtmlTableColgroups(contentWithoutDuplicateTitle));
   const processed = matter.stringify(normalizedContent, parsed.data);
   const targetPath = processedPagePath(page, workspaceDir);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
@@ -132,7 +135,28 @@ async function writeProcessedPage(workspaceDir: string, page: PageInfo): Promise
 
 function processedPagePath(page: PageInfo, workspaceDir?: string): string {
   const root = workspaceDir ?? workspacePath(path.dirname(page.absolutePath));
-  return path.join(root, 'src', 'processed', page.file);
+  const processedFile = page.file.replace(/\.md$/i, '.mdx');
+  return path.join(root, 'src', 'processed', processedFile);
+}
+
+function removeDuplicateTitleHeading(content: string, title: string): string {
+  const markdownHeading = /^#\s+(.+)\n+/;
+  const markdownMatch = markdownHeading.exec(content);
+  if (markdownMatch && normalizeTitle(markdownMatch[1]) === normalizeTitle(title)) {
+    return content.slice(markdownMatch[0].length);
+  }
+
+  const htmlHeading = /^<h1[^>]*>(.*?)<\/h1>\s*/is;
+  const htmlMatch = htmlHeading.exec(content);
+  if (htmlMatch && normalizeTitle(htmlMatch[1].replace(/<[^>]+>/g, '')) === normalizeTitle(title)) {
+    return content.slice(htmlMatch[0].length);
+  }
+
+  return content;
+}
+
+function normalizeTitle(value: string): string {
+  return value.replace(/\s+#+\s*$/, '').replace(/[{}*_`~\[\]]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function normalizeSlashSpacingInMdx(content: string): string {

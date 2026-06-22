@@ -5,6 +5,8 @@ import matter from 'gray-matter';
 import type { BriefkitConfig, HeadingInfo, PageConfigEntry, PageInfo, ReportInfo } from './types.js';
 
 const CONFIG_NAMES = ['briefkit.config.ts', 'briefkit.config.js', 'briefkit.config.mjs'];
+const PAGE_EXTENSIONS = ['.mdx', '.md'];
+const ROOT_PAGE_CANDIDATES = ['index.mdx', 'index.md', 'README.mdx', 'README.md'];
 
 export async function loadReport(reportDirInput: string): Promise<ReportInfo> {
   const reportDir = path.resolve(reportDirInput);
@@ -12,7 +14,7 @@ export async function loadReport(reportDirInput: string): Promise<ReportInfo> {
   const discoveredFiles = await discoverMdxFiles(reportDir);
 
   if (discoveredFiles.length === 0) {
-    throw new Error(`No MDX pages found in ${reportDir}. Expected index.mdx or pages/**/*.mdx.`);
+    throw new Error(`No Markdown pages found in ${reportDir}. Expected index.mdx, index.md, README.md, or pages/**/*.{md,mdx}.`);
   }
 
   const configuredEntries = normalizePageEntries(config.pages ?? []);
@@ -54,16 +56,20 @@ async function loadConfig(reportDir: string): Promise<BriefkitConfig> {
 
 async function discoverMdxFiles(reportDir: string): Promise<string[]> {
   const files: string[] = [];
-  const rootIndex = path.join(reportDir, 'index.mdx');
-  if (await exists(rootIndex)) files.push('index.mdx');
+  for (const candidate of ROOT_PAGE_CANDIDATES) {
+    if (await exists(path.join(reportDir, candidate))) {
+      files.push(candidate);
+      break;
+    }
+  }
 
   const pagesDir = path.join(reportDir, 'pages');
   if (await exists(pagesDir)) {
     await collectMdxFiles(pagesDir, pagesDir, files);
   }
 
-  if (!files.includes('index.mdx') && !files.includes('pages/index.mdx')) {
-    throw new Error(`Report requires index.mdx or pages/index.mdx in ${reportDir}.`);
+  if (!hasIndexPage(files)) {
+    throw new Error(`Report requires index.mdx, index.md, README.md, or pages/index.{md,mdx} in ${reportDir}.`);
   }
 
   return files.map(normalizeRelativePath);
@@ -77,7 +83,7 @@ async function collectMdxFiles(rootDir: string, currentDir: string, files: strin
       await collectMdxFiles(rootDir, entryPath, files);
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith('.mdx')) {
+    if (entry.isFile() && isPageFile(entry.name)) {
       files.push(normalizeRelativePath(path.join('pages', path.relative(rootDir, entryPath))));
     }
   }
@@ -88,7 +94,7 @@ async function readPage(reportDir: string, file: string, config?: PageConfigEntr
   const source = await fs.readFile(absolutePath, 'utf8');
   const parsed = matter(source);
   const data = parsed.data as Record<string, unknown>;
-  const title = config?.title ?? stringValue(data.title) ?? titleFromFile(file);
+  const title = config?.title ?? stringValue(data.title) ?? titleFromContent(parsed.content) ?? titleFromFile(file);
   const route = normalizeRoute(config?.route ?? routeFromFile(file));
   const layout = normalizeLayout(data.layout);
 
@@ -113,16 +119,14 @@ function normalizeRelativePath(file: string): string {
 }
 
 function comparePageFiles(a: string, b: string): number {
-  if (a === 'index.mdx') return -1;
-  if (b === 'index.mdx') return 1;
-  if (a === 'pages/index.mdx') return -1;
-  if (b === 'pages/index.mdx') return 1;
+  if (isIndexPage(a)) return -1;
+  if (isIndexPage(b)) return 1;
   return a.localeCompare(b);
 }
 
 function routeFromFile(file: string): string {
-  if (file === 'index.mdx' || file === 'pages/index.mdx') return '/';
-  return `/${path.basename(file, '.mdx')}/`;
+  if (isIndexPage(file)) return '/';
+  return `/${path.basename(file, path.extname(file))}/`;
 }
 
 function normalizeRoute(route: string): string {
@@ -131,9 +135,33 @@ function normalizeRoute(route: string): string {
 }
 
 function titleFromFile(file: string): string {
-  const baseName = path.basename(file, '.mdx');
-  if (baseName === 'index') return 'Index';
+  const baseName = path.basename(file, path.extname(file));
+  if (baseName === 'index' || baseName.toLowerCase() === 'readme') return 'Index';
   return baseName.split(/[-_]/).filter(Boolean).map(capitalize).join(' ');
+}
+
+function isPageFile(file: string): boolean {
+  return PAGE_EXTENSIONS.includes(path.extname(file).toLowerCase());
+}
+
+function isIndexPage(file: string): boolean {
+  const normalized = normalizeRelativePath(file).toLowerCase();
+  return normalized === 'index.mdx'
+    || normalized === 'index.md'
+    || normalized === 'readme.mdx'
+    || normalized === 'readme.md'
+    || normalized === 'pages/index.mdx'
+    || normalized === 'pages/index.md';
+}
+
+function hasIndexPage(files: string[]): boolean {
+  return files.some(isIndexPage);
+}
+
+function titleFromContent(content: string): string | undefined {
+  const match = /^#\s+(.+)$/m.exec(content);
+  if (!match) return undefined;
+  return stripMdx(match[1].replace(/\s+#+\s*$/, '').trim());
 }
 
 function capitalize(value: string): string {
@@ -164,6 +192,7 @@ function extractHeadings(content: string): HeadingInfo[] {
   }
 
   while ((match = htmlHeadingPattern.exec(content)) !== null) {
+    if (isNonNavigableHeading(match[2])) continue;
     const text = stripMdx(match[3]);
     if (!text) continue;
     matches.push({
@@ -186,6 +215,11 @@ function extractHeadings(content: string): HeadingInfo[] {
 function extractId(attributes: string): string | undefined {
   const match = /\sid=["']([^"']+)["']/.exec(attributes);
   return match?.[1];
+}
+
+function isNonNavigableHeading(attributes: string): boolean {
+  return /className=["'][^"']*(bk-callout-title|callout-title)[^"']*["']/.test(attributes)
+    || /data-nav=["']false["']/.test(attributes);
 }
 
 function stripMdx(value: string): string {

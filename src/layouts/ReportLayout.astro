@@ -33,7 +33,8 @@ const {
   colorMode = 'auto',
 } = Astro.props;
 
-const footerPrefix = author ? `Made by ${author} with Briefkit` : 'Made with Briefkit';
+const footerPrefix = author ? `Made by ${author} with` : 'Made with';
+const briefkitUrl = 'https://github.com/taylorcjensen/briefkit';
 const hasPageNav = pages.length > 1;
 const hasToc = headings.length > 0;
 ---
@@ -100,7 +101,7 @@ const hasToc = headings.length > 0;
         )}
       </div>
 
-      <footer class="bk-footer">{footerPrefix} | {buildTime}</footer>
+      <footer class="bk-footer">{footerPrefix} <a href={briefkitUrl}>Briefkit</a> | {buildTime}</footer>
     </div>
     <script is:inline>
       (() => {

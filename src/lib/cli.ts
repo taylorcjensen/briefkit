@@ -36,7 +36,7 @@ export async function runCli(argv: string[]): Promise<void> {
   });
 
   if (args.command === 'dev') {
-    const server = await dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } });
+    const server = await runInWorkspace(workspace.dir, () => dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } }));
     const address = server.address;
     const url = typeof address === 'object' && address ? `http://localhost:${address.port}` : 'http://localhost';
     if (args.open) openBrowserWithoutFocus(url);
@@ -48,11 +48,21 @@ export async function runCli(argv: string[]): Promise<void> {
   }
 
   await fs.rm(workspace.outDir, { recursive: true, force: true });
-  await build({ root: workspace.dir });
+  await runInWorkspace(workspace.dir, () => build({ root: workspace.dir }));
   await ensurePublicFallback(report.reportDir, workspace.outDir);
   console.log('Briefkit build complete');
   console.log(`Report: ${report.reportDir}`);
   console.log(`Output: ${workspace.outDir}`);
+}
+
+async function runInWorkspace<T>(workspaceDir: string, action: () => Promise<T>): Promise<T> {
+  const originalCwd = process.cwd();
+  process.chdir(workspaceDir);
+  try {
+    return await action();
+  } finally {
+    process.chdir(originalCwd);
+  }
 }
 
 function parseArgs(args: string[]): ParsedArgs {
