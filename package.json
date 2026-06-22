@@ -1,6 +1,6 @@
 {
   "name": "briefkit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Static Markdown/MDX report-site toolkit for fast agent-authored briefs.",
   "keywords": [
     "agent",
@@ -11,7 +11,7 @@
     "report",
     "static-site"
   ],
-  "homepage": "https://github.com/taylorcjensen/briefkit#readme",
+  "homepage": "https://taylorcjensen.github.io/briefkit/",
   "bugs": {
     "url": "https://github.com/taylorcjensen/briefkit/issues"
   },
