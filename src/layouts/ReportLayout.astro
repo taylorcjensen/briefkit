@@ -1,5 +1,5 @@
 ---
-import '../styles/report.css';
+import reportCss from '../styles/report.css?raw';
 
 export interface NavPage {
   title: string;
@@ -44,6 +44,7 @@ const hasToc = headings.length > 0;
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{reportTitle && reportTitle !== title ? `${title} · ${reportTitle}` : title}</title>
+    <style is:inline set:html={reportCss}></style>
   </head>
   <body>
     <script is:inline>

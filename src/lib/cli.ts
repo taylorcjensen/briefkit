@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { build, dev } from 'astro';
 import { loadReport } from './report.js';
 import { createWorkspace } from './workspace.js';
@@ -35,13 +36,14 @@ export async function runCli(argv: string[]): Promise<void> {
   });
 
   if (args.command === 'dev') {
-    const server = await dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: args.open } });
+    const server = await dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } });
     const address = server.address;
     const url = typeof address === 'object' && address ? `http://localhost:${address.port}` : 'http://localhost';
+    if (args.open) openBrowserWithoutFocus(url);
     console.log('Briefkit dev server running');
     console.log(`Report: ${report.reportDir}`);
     console.log(`URL: ${url}`);
-    if (args.open) console.log('Opened browser window.');
+    if (args.open) console.log('Opened browser window in background.');
     return;
   }
 
@@ -99,6 +101,17 @@ function parseArgs(args: string[]): ParsedArgs {
 function parseColorMode(value: string | undefined): ColorMode {
   if (value === 'auto' || value === 'light' || value === 'dark') return value;
   throw new Error('--color-mode must be auto, light, or dark.');
+}
+
+function openBrowserWithoutFocus(url: string): void {
+  if (process.platform === 'darwin') {
+    spawn('open', ['-g', url], { detached: true, stdio: 'ignore' }).unref();
+    return;
+  }
+
+  const opener = process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  spawn(opener, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
 async function ensurePublicFallback(reportDir: string, outDir: string): Promise<void> {

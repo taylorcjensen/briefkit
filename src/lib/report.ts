@@ -150,21 +150,42 @@ function normalizeLayout(value: unknown): PageInfo['layout'] {
 }
 
 function extractHeadings(content: string): HeadingInfo[] {
-  const headings: HeadingInfo[] = [];
+  const matches: Array<{ index: number; depth: number; slug?: string; text: string }> = [];
   const usedSlugs = new Map<string, number>();
-  const headingPattern = /^(#{2,4})\s+(.+)$/gm;
+  const markdownHeadingPattern = /^(#{2,4})\s+(.+)$/gm;
+  const htmlHeadingPattern = /<h([2-4])([^>]*)>(.*?)<\/h\1>/gims;
   let match: RegExpExecArray | null;
 
-  while ((match = headingPattern.exec(content)) !== null) {
-    const depth = match[1].length;
+  while ((match = markdownHeadingPattern.exec(content)) !== null) {
     const rawText = match[2].replace(/\s+#+\s*$/, '').trim();
     const text = stripMdx(rawText);
     if (!text) continue;
-    const slug = uniqueSlug(slugify(text), usedSlugs);
-    headings.push({ depth, slug, text });
+    matches.push({ index: match.index, depth: match[1].length, text });
   }
 
-  return headings;
+  while ((match = htmlHeadingPattern.exec(content)) !== null) {
+    const text = stripMdx(match[3]);
+    if (!text) continue;
+    matches.push({
+      index: match.index,
+      depth: Number(match[1]),
+      slug: extractId(match[2]),
+      text,
+    });
+  }
+
+  return matches
+    .sort((a, b) => a.index - b.index)
+    .map((heading) => ({
+      depth: heading.depth,
+      slug: uniqueSlug(heading.slug || slugify(heading.text), usedSlugs),
+      text: heading.text,
+    }));
+}
+
+function extractId(attributes: string): string | undefined {
+  const match = /\sid=["']([^"']+)["']/.exec(attributes);
+  return match?.[1];
 }
 
 function stripMdx(value: string): string {

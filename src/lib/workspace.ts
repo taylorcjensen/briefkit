@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import matter from 'gray-matter';
+import { calculateTableWidths } from './tableWidths.js';
 import type { ColorMode, PageInfo, ReportInfo } from './types.js';
 
 export interface WorkspaceOptions {
@@ -48,6 +50,7 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
   await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir), 'utf8');
 
   for (const page of report.pages) {
+    await writeProcessedPage(workspaceDir, page);
     await writePageWrapper(workspaceDir, page);
   }
 
@@ -68,6 +71,7 @@ function astroConfig(reportDir: string, outDir: string): string {
 import mdx from '@astrojs/mdx';
 import path from 'node:path';
 import YAML from 'yaml';
+import briefkitTables from ${JSON.stringify(path.join(packageRoot, 'src', 'lib', 'rehypeTables.ts'))};
 
 function yamlPlugin() {
   return {
@@ -83,6 +87,8 @@ export default defineConfig({
   output: 'static',
   outDir: ${JSON.stringify(outDir)},
   publicDir: ${JSON.stringify(publicDir)},
+  devToolbar: { enabled: false },
+  markdown: { rehypePlugins: [briefkitTables] },
   integrations: [mdx()],
   vite: {
     plugins: [yamlPlugin()],
@@ -105,7 +111,7 @@ export default defineConfig({
 async function writePageWrapper(workspaceDir: string, page: PageInfo): Promise<void> {
   const routeFile = routeToWrapperPath(workspaceDir, page.route);
   await fs.mkdir(path.dirname(routeFile), { recursive: true });
-  await fs.writeFile(routeFile, pageWrapperSource(page), 'utf8');
+  await fs.writeFile(routeFile, pageWrapperSource(workspaceDir, page), 'utf8');
 }
 
 function routeToWrapperPath(workspaceDir: string, route: string): string {
@@ -114,8 +120,72 @@ function routeToWrapperPath(workspaceDir: string, route: string): string {
   return path.join(workspaceDir, 'src', 'pages', routeName, 'index.astro');
 }
 
-function pageWrapperSource(page: PageInfo): string {
-  const pagePath = page.absolutePath;
+async function writeProcessedPage(workspaceDir: string, page: PageInfo): Promise<void> {
+  const source = await fs.readFile(page.absolutePath, 'utf8');
+  const parsed = matter(source);
+  const normalizedContent = normalizeSlashSpacingInMdx(injectHtmlTableColgroups(parsed.content));
+  const processed = matter.stringify(normalizedContent, parsed.data);
+  const targetPath = processedPagePath(page, workspaceDir);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, processed, 'utf8');
+}
+
+function processedPagePath(page: PageInfo, workspaceDir?: string): string {
+  const root = workspaceDir ?? workspacePath(path.dirname(page.absolutePath));
+  return path.join(root, 'src', 'processed', page.file);
+}
+
+function normalizeSlashSpacingInMdx(content: string): string {
+  let inFence = false;
+  return content.split('\n').map((line) => {
+    if (/^\s*```/.test(line)) inFence = !inFence;
+    if (inFence || /^\s*(import|export)\s/.test(line)) return line;
+    return line.split(/(<[^>]+>)/g).map((part) => {
+      if (part.startsWith('<') && part.endsWith('>')) return part;
+      return part
+        .replace(/(?<=[A-Za-z0-9)])\/(?=[A-Za-z0-9(])/g, ' / ')
+        .replace(/\s+\/\s+/g, ' / ');
+    }).join('');
+  }).join('\n');
+}
+
+function injectHtmlTableColgroups(content: string): string {
+  return content.replace(/<table(?![^>]*className=["'][^"']*bk-skip-normalize)([^>]*)>([\s\S]*?)<\/table>/gi, (match, attributes: string, body: string) => {
+    if (/<colgroup[\s>]/i.test(body)) return match;
+    const headers = extractHtmlHeaders(body);
+    if (headers.length === 0) return match;
+    const rows = extractHtmlRows(body);
+    const colgroup = `<colgroup>${calculateTableWidths(headers, rows).map((width) => `<col style={{ width: '${width}%' }} />`).join('')}</colgroup>`;
+    const normalizedAttributes = addClassNameAttribute(attributes, 'bk-normalized-table');
+    return `<table${normalizedAttributes}>${colgroup}${body}</table>`;
+  });
+}
+
+function extractHtmlHeaders(tableBody: string): string[] {
+  const rowMatch = /<thead[\s\S]*?<tr[^>]*>([\s\S]*?)<\/tr>[\s\S]*?<\/thead>/i.exec(tableBody) ?? /<tr[^>]*>([\s\S]*?)<\/tr>/i.exec(tableBody);
+  if (!rowMatch) return [];
+  return [...rowMatch[1].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)]
+    .map((match) => match[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function extractHtmlRows(tableBody: string): string[][] {
+  const bodyMatch = /<tbody[^>]*>([\s\S]*?)<\/tbody>/i.exec(tableBody);
+  const source = bodyMatch?.[1] ?? tableBody.replace(/<thead[\s\S]*?<\/thead>/i, '');
+  return [...source.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
+    .map((rowMatch) => [...rowMatch[1].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)]
+      .map((cellMatch) => cellMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()));
+}
+
+function addClassNameAttribute(attributes: string, className: string): string {
+  const classMatch = /className=["']([^"']*)["']/.exec(attributes);
+  if (!classMatch) return `${attributes} className="${className}"`;
+  if (classMatch[1].split(/\s+/).includes(className)) return attributes;
+  return attributes.replace(classMatch[0], `className="${classMatch[1]} ${className}"`);
+}
+
+function pageWrapperSource(workspaceDir: string, page: PageInfo): string {
+  const pagePath = processedPagePath(page, workspaceDir);
   const pageKey = page.file;
   const customLayout = page.customLayout;
 
