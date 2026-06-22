@@ -36,7 +36,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck",
-    "briefkit": "node ./bin/briefkit.js"
+    "briefkit": "node --import tsx/esm ./bin/briefkit.js"
   },
   "dependencies": {
     "@astrojs/mdx": "^4.3.0",
