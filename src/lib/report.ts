@@ -11,13 +11,13 @@ const ROOT_PAGE_CANDIDATES = ['index.mdx', 'index.md', 'README.mdx', 'README.md'
 export async function loadReport(reportDirInput: string): Promise<ReportInfo> {
   const reportDir = path.resolve(reportDirInput);
   const config = await loadConfig(reportDir);
-  const discoveredFiles = await discoverMdxFiles(reportDir);
+  const configuredEntries = normalizePageEntries(config.pages ?? []);
+  const discoveredFiles = await discoverMdxFiles(reportDir, configuredEntries);
 
   if (discoveredFiles.length === 0) {
     throw new Error(`No Markdown pages found in ${reportDir}. Expected index.mdx, index.md, README.md, or pages/**/*.{md,mdx}.`);
   }
 
-  const configuredEntries = normalizePageEntries(config.pages ?? []);
   const configuredFiles = new Set(configuredEntries.map((entry) => normalizeRelativePath(entry.file)));
   const configuredByFile = new Map(configuredEntries.map((entry) => [normalizeRelativePath(entry.file), entry]));
 
@@ -54,7 +54,7 @@ async function loadConfig(reportDir: string): Promise<BriefkitConfig> {
   return {};
 }
 
-async function discoverMdxFiles(reportDir: string): Promise<string[]> {
+async function discoverMdxFiles(reportDir: string, configuredEntries: PageConfigEntry[]): Promise<string[]> {
   const files: string[] = [];
   for (const candidate of ROOT_PAGE_CANDIDATES) {
     if (await exists(path.join(reportDir, candidate))) {
@@ -66,6 +66,12 @@ async function discoverMdxFiles(reportDir: string): Promise<string[]> {
   const pagesDir = path.join(reportDir, 'pages');
   if (await exists(pagesDir)) {
     await collectMdxFiles(pagesDir, pagesDir, files);
+  }
+
+  for (const entry of configuredEntries) {
+    const file = normalizeRelativePath(entry.file);
+    if (!isPageFile(file) || files.includes(file)) continue;
+    if (await exists(path.join(reportDir, file))) files.push(file);
   }
 
   if (!hasIndexPage(files)) {

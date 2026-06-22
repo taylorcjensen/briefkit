@@ -1,33 +1,171 @@
 # Briefkit
 
-Briefkit turns AI research into local, static, decision-oriented report websites.
+[Read this README as a Briefkit report](https://taylorcjensen.github.io/briefkit/)
 
-It is not an agent framework, dashboard backend, or structured-data prison. The goal is simple: preserve nuanced analysis while reusing a consistent report shell, dense table style, sidebar navigation, glossary hover behavior, callouts, and table patterns.
+Briefkit turns Markdown or MDX folders into local, static, decision-oriented report websites.
 
-## Status
+It is built for agent-authored briefs: research summaries, comparisons, evidence packs, audits, risk registers, status reports, and one-off decision pages. The source stays simple and portable. Briefkit supplies the shared shell: layout, sidebar navigation, heading TOC, dark/light/auto theme, callouts, tooltips, and table normalization.
 
-Briefkit now has an early Astro/MDX CLI prototype:
+Briefkit is not an app framework, dashboard backend, CMS, or structured-data prison. The goal is to keep nuanced analysis easy to write while making the result readable enough to hand to a human.
+
+## What it does
+
+| Need | Briefkit behavior |
+|---|---|
+| Fast local report | Run `briefkit dev /path/to/report` and get a live site |
+| Portable source | Use `README.md`, `index.md`, or `pages/*.md` |
+| Full components | Use `index.mdx` or `pages/*.mdx` |
+| Scannable tables | Markdown tables are automatically styled and width-normalized |
+| Decision artifacts | Use callouts, dense tables, sidebars, and heading TOCs |
+| Throwaway output | Build static files to `{report-folder}/brief/` |
+
+## Install
+
+### From npm
 
 ```bash
-npm install
-npm run briefkit -- dev examples/basic-report --no-open
-npm run briefkit -- build examples/basic-report
+npm install -g briefkit
 ```
 
-The intended linked/global workflow is:
+Then run:
 
 ```bash
-npm link
 briefkit dev /path/to/report
 briefkit build /path/to/report
 ```
 
-`dev` is the primary workflow: it starts live reload and opens the browser by default. Agents should not separately open the browser after running `briefkit dev`.
+### From this repository
 
-`build` writes static output to:
+```bash
+git clone https://github.com/taylorcjensen/briefkit.git
+cd briefkit
+npm install
+npm link
+```
+
+Then run:
+
+```bash
+briefkit dev examples/readme-report
+briefkit build examples/basic-report
+```
+
+Without linking:
+
+```bash
+npm run briefkit -- dev examples/readme-report
+npm run briefkit -- build examples/basic-report
+```
+
+## Commands
+
+```bash
+briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
+```
+
+| Command | Use it for | Output |
+|---|---|---|
+| `dev` | Primary authoring workflow | Live Astro dev server |
+| `build` | Saved static artifact | `{report-folder}/brief/` by default |
+
+`briefkit dev` opens the browser by default. Agent workflows should not open a separate browser tab after running it. Use `--no-open` only when you explicitly do not want a browser opened.
+
+Build/dev generated Astro workspaces live under the OS temp directory. The report folder only needs to contain your source files and optional build output.
+
+## Quick start: plain Markdown
+
+A folder with only `README.md` is a valid Briefkit report.
+
+```bash
+mkdir /tmp/vendor-brief
+cat > /tmp/vendor-brief/README.md <<'EOF'
+# Vendor Decision Brief
+
+## Verdict
+
+Pick Option A if you need the lowest maintenance path.
+
+## Comparison
+
+| Option | Best for | Caveat |
+|---|---|---|
+| A | Fast decisions | Less customizable |
+| B | Deep analysis | More work |
+
+## Decision rule
+
+Choose B only if the extra analysis time changes the decision.
+EOF
+
+briefkit dev /tmp/vendor-brief
+```
+
+Briefkit will:
+
+- route `README.md` to `/`;
+- use the first `# Heading` as the page title;
+- avoid rendering that title twice;
+- add sidebar navigation from page headings;
+- upgrade Markdown tables with Briefkit table styling and content-aware widths.
+
+Use Markdown when the report should stay generic and portable.
+
+## Full-featured MDX report
+
+Use MDX when you need Briefkit components, imported data, or local components.
 
 ```text
-{report-folder}/brief/
+my-report/
+  briefkit.config.js
+  index.mdx
+  pages/details.mdx
+  data/risks.yaml
+  public/source.pdf
+```
+
+`briefkit.config.js`:
+
+```js
+export default {
+  title: 'Vendor Decision Brief',
+  author: 'Ariadne',
+  pages: [
+    'index.mdx',
+    { file: 'pages/details.mdx', title: 'Details', route: '/details/' },
+  ],
+};
+```
+
+`index.mdx`:
+
+```mdx
+---
+title: Vendor Decision Brief
+---
+
+import { Callout, BriefTable, Tooltip } from 'briefkit';
+import risks from '@report/data/risks.yaml';
+
+<Callout type="info" title="Verdict">
+Pick Option A unless the extra evidence from Option B would change the decision.
+</Callout>
+
+## Risk register
+
+<BriefTable
+  caption="Risk register"
+  columns={[
+    { key: 'risk', label: 'Risk' },
+    { key: 'warning', label: 'Warning sign' },
+    { key: 'mitigation', label: 'Mitigation' },
+  ]}
+  rows={risks}
+  stickyHeader
+  stickyFirstColumn
+/>
+
+Use a <Tooltip term="throwaway report">purpose-built static site for one decision or research result.</Tooltip>
 ```
 
 ## Report folder shape
@@ -46,7 +184,7 @@ my-report/
   index.mdx
 ```
 
-Optional structure:
+Full shape:
 
 ```text
 my-report/
@@ -59,176 +197,151 @@ my-report/
   briefkit.config.{ts,js,mjs}
 ```
 
-Root page priority is:
+Root page priority:
 
 ```text
 index.mdx > index.md > README.mdx > README.md
 ```
 
-Example config:
+Routes:
 
-```js
-export default {
-  title: 'Vendor Decision Brief',
-  author: 'Claude',
-  pages: [
-    'index.mdx',
-    { file: 'pages/details.mdx', title: 'Details', route: '/details/' },
-  ],
-};
+| Source file | Route |
+|---|---:|
+| `index.mdx` | `/` |
+| `index.md` | `/` |
+| `README.mdx` | `/` |
+| `README.md` | `/` |
+| `pages/details.mdx` | `/details/` |
+| `pages/details.md` | `/details/` |
+
+Rules:
+
+- `pages` in config controls page order.
+- Unlisted pages are included alphabetically after configured pages.
+- `hidden: true` frontmatter keeps a page out of render/nav.
+- `layout: none` renders page content without the Briefkit shell.
+- `layout: custom` with `customLayout` lets a page use a local layout.
+- Files in `public/` are copied to the static output and can be linked from `/file-name.ext`.
+
+## Components
+
+Briefkit v0 intentionally keeps the primitive set small.
+
+| Component | Use it for |
+|---|---|
+| `ReportLayout` | Shared shell used automatically by the CLI |
+| `Callout` | Verdicts, notes, caveats, warnings, source notes |
+| `Tooltip` | Inline explanations for jargon and acronyms |
+| `BriefTable` | Explicit tables with captions, sticky columns, or data rows |
+
+### Callout
+
+```mdx
+<Callout type="warning" title="Main caveat">
+This recommendation depends on the source data being current.
+</Callout>
 ```
 
-## Markdown quick start
+Types:
 
-A plain `README.md` works as a complete Briefkit report:
+```text
+note | tip | info | warning | danger
+```
 
-```md
-# Vendor Decision Brief
+### Tooltip
 
-## Verdict
+```mdx
+<Tooltip term="ETL">Extract, transform, load: a pipeline that moves and reshapes data.</Tooltip>
+```
 
-Pick Option A if you need the lowest maintenance path.
+Tooltip text should explain practical effect, not merely expand an acronym.
 
-## Comparison
+### BriefTable
+
+Inline Markdown table:
+
+```mdx
+<BriefTable caption="Decision matrix" stickyHeader stickyFirstColumn>
 
 | Option | Best for | Caveat |
 |---|---|---|
 | A | Fast decisions | Less customizable |
 | B | Deep analysis | More work |
-```
-
-Run it with:
-
-```bash
-briefkit dev /path/to/report
-```
-
-Briefkit automatically upgrades ordinary Markdown tables with shared table styling, sticky headers, and content-aware column widths. Use Markdown when portability and speed matter; use MDX when you need Briefkit components, local components, or imported data.
-
-## MDX authoring
-
-```mdx
----
-title: Basic Report
----
-
-import { Callout, BriefTable, Tooltip } from 'briefkit';
-
-<Callout type="info" title="Verdict">
-Pick the option that best matches the kind of friction you want.
-</Callout>
-
-## Risk register
-
-<BriefTable caption="Risk register" stickyHeader stickyFirstColumn>
-
-| Risk | Warning sign | Mitigation |
-|---|---|---|
-| Schema prison | The report cannot express nuance | Keep MDX freeform |
 
 </BriefTable>
-
-A <Tooltip term="throwaway report">A purpose-built static site for one decision or research result.</Tooltip> should be easy to make and easy to discard.
 ```
 
-## Core primitives
+Data-driven table:
 
-Briefkit v0 intentionally keeps the primitive set small:
+```mdx
+import rows from '@report/data/risks.yaml';
 
-- `ReportLayout`
-- `Callout`
-- `Tooltip`
-- `BriefTable`
-
-Patterns such as verdicts, source notes, facts tables, risk registers, score matrices, and decision rules should be built from those primitives instead of becoming rigid schemas.
-
-## Examples
-
-### README Markdown report
-
-```text
-examples/readme-report/
+<BriefTable
+  caption="Risk register"
+  columns={[
+    { key: 'risk', label: 'Risk' },
+    { key: 'warning', label: 'Warning sign' },
+    { key: 'mitigation', label: 'Mitigation' },
+  ]}
+  rows={rows}
+  stickyHeader
+  stickyFirstColumn
+/>
 ```
 
-Build it with:
+Ordinary Markdown tables are enhanced automatically. Use `BriefTable` when you need a caption, sticky first column, data rows, or explicit control.
+
+## Data and local imports
+
+YAML files can be imported directly from MDX:
+
+```yaml
+# data/risks.yaml
+- risk: Source conflict
+  warning: Official docs and local notes disagree
+  mitigation: Preserve both claims and mark confidence
+```
+
+```mdx
+import risks from '@report/data/risks.yaml';
+```
+
+Use `@report` for imports rooted at the report folder:
+
+```mdx
+import CustomMatrix from '@report/components/CustomMatrix.astro';
+import facts from '@report/data/facts.yaml';
+```
+
+## Recommended report sections
+
+Use only the sections that fit the task.
+
+1. Verdict
+2. Hard facts
+3. Good fit / bad fit
+4. Comparison matrix
+5. Score matrix
+6. System-by-system analysis
+7. Risk register
+8. Source audit / caveats
+9. Decision rules
+10. Next steps
+
+## Example site
+
+This README is the example report. Build it with:
 
 ```bash
-npm run briefkit -- build examples/readme-report
+npm run briefkit -- build . --out ./dist
 ```
 
-### Astro/MDX prototype
-
-```text
-examples/basic-report/
-```
-
-Build it with:
-
-```bash
-npm run briefkit -- build examples/basic-report
-```
-
-### Legacy static proof-of-concept
-
-```text
-examples/modlist-comparison/
-  index.html
-  hoh-fit.html
-  styles.css
-```
-
-Open either HTML file directly in a browser.
+The generated site includes the README at `/` and the design notes at `/design/`.
 
 ## Design notes
 
-The detailed design record lives in [`docs/design.md`](docs/design.md).
+The detailed design record is included as a second Briefkit page: [Design notes](/design/).
 
-## Style guidelines
+## License
 
-### Dense over pretty
-
-Use the page as a working decision artifact. Favor tables, compact prose, and clear labels over decorative layouts.
-
-Good:
-
-- `Risk | Why it happens | Warning sign | Mitigation`
-- `List | Download size | Installed size | Plugin count | Caveat`
-- `Priority | Winner | Why | Avoid if`
-
-Avoid:
-
-- hero cards with vague claims;
-- marketing adjectives without evidence;
-- giant whitespace layouts;
-- unsupported recommendations.
-
-### Lead with the decision
-
-Every report should answer the user's practical decision early. A verdict is a `Callout`, not a separate schema.
-
-### Keep nuance, but make it scannable
-
-Use tables for dense comparisons. Use paragraphs only where a narrative explanation is clearer than rows and columns.
-
-### Use “unknown” instead of inventing facts
-
-When a fact is missing, say `Unknown` and include the evidence caveat.
-
-### Separate facts from interpretation
-
-Hard facts belong in tables. Judgment belongs in verdict, fit, risk, and decision-rule sections.
-
-### Explain jargon inline
-
-Use inline `Tooltip` explanations for unfamiliar named systems, products, mods, acronyms, or concepts.
-
-### Write for a human choosing, not for a stakeholder deck
-
-Tone should be direct and useful:
-
-- “Pick this if…”
-- “Avoid this if…”
-- “This burns you out when…”
-- “This beats the alternative only if…”
-
-Avoid corporate gloss.
+MIT

@@ -1,7 +1,24 @@
 {
   "name": "briefkit",
   "version": "0.1.0",
-  "description": "Static MDX report-site toolkit for fast agent-authored briefs.",
+  "description": "Static Markdown/MDX report-site toolkit for fast agent-authored briefs.",
+  "keywords": [
+    "agent",
+    "astro",
+    "brief",
+    "markdown",
+    "mdx",
+    "report",
+    "static-site"
+  ],
+  "homepage": "https://github.com/taylorcjensen/briefkit#readme",
+  "bugs": {
+    "url": "https://github.com/taylorcjensen/briefkit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taylorcjensen/briefkit.git"
+  },
   "type": "module",
   "bin": {
     "briefkit": "./bin/briefkit.js"

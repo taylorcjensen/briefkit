@@ -1,6 +1,0 @@
-- risk: Schema prison
-  warning: The report cannot express nuance
-  mitigation: Keep MDX freeform and components optional
-- risk: Copied core sprawl
-  warning: Every report contains an Astro app
-  mitigation: Generate temp workspaces from one shared core

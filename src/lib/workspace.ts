@@ -166,11 +166,21 @@ function normalizeSlashSpacingInMdx(content: string): string {
     if (inFence || /^\s*(import|export)\s/.test(line)) return line;
     return line.split(/(<[^>]+>)/g).map((part) => {
       if (part.startsWith('<') && part.endsWith('>')) return part;
-      return part
-        .replace(/(?<=[A-Za-z0-9)])\/(?=[A-Za-z0-9(])/g, ' / ')
-        .replace(/\s+\/\s+/g, ' / ');
+      return normalizeSlashSpacingText(part);
     }).join('');
   }).join('\n');
+}
+
+function normalizeSlashSpacingText(value: string): string {
+  const preserved: string[] = [];
+  return value
+    .replace(/(`[^`]*`|\[[^\]]*\]\([^)]+\))/g, (match) => {
+      preserved.push(match);
+      return `\u0000${preserved.length - 1}\u0000`;
+    })
+    .replace(/(?<=[A-Za-z0-9)])\/(?=[A-Za-z0-9(])/g, ' / ')
+    .replace(/\s+\/\s+/g, ' / ')
+    .replace(/\u0000(\d+)\u0000/g, (_match, index: string) => preserved[Number(index)] ?? '');
 }
 
 function injectHtmlTableColgroups(content: string): string {

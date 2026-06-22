@@ -13,7 +13,6 @@ export default function briefkitTables() {
     visit(tree, (node) => {
       if (node.type === 'element' && node.tagName === 'table') normalizeTable(node);
     });
-    normalizeSlashSpacing(tree);
   };
 }
 
@@ -89,25 +88,6 @@ function findFirst(node: HastNode, predicate: (node: HastNode) => boolean): Hast
 function textContent(node: HastNode): string {
   if (typeof node.value === 'string') return node.value;
   return (node.children ?? []).map(textContent).join('').trim();
-}
-
-function normalizeSlashSpacing(node: HastNode, parent?: HastNode): void {
-  if (node.type === 'text' && typeof node.value === 'string' && !isLiteralTextParent(parent)) {
-    node.value = node.value.replace(/(?<=[A-Za-z0-9)])\/(?=[A-Za-z0-9(])/g, ' / ');
-    node.value = node.value.replace(/\s+\/\s+/g, ' / ');
-  }
-
-  for (const child of node.children ?? []) normalizeSlashSpacing(child, node);
-}
-
-function isLiteralTextParent(node?: HastNode): boolean {
-  return node?.tagName === 'code'
-    || node?.tagName === 'pre'
-    || node?.tagName === 'kbd'
-    || node?.tagName === 'samp'
-    || node?.tagName === 'script'
-    || node?.tagName === 'style'
-    || node?.tagName === 'a';
 }
 
 function visit(node: HastNode, callback: (node: HastNode) => void): void {
