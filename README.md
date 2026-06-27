@@ -63,7 +63,7 @@ npm run briefkit -- build examples/basic-report
 ```bash
 briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
 briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
-briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--target https://briefs.example.com] [--api-key KEY]
+briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY]
 briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
 briefkit publish-config set --target https://briefs.example.com --api-key KEY
 ```
@@ -105,6 +105,7 @@ docker run -d \
   -e BRIEFKIT_DOMAIN=https://briefs.example.com \
   -e BRIEFKIT_API_KEYS=key-one,key-two \
   -e BRIEFKIT_DEFAULT_DURATION=3mo \
+  -e BRIEFKIT_DEFAULT_INDEXED=true \
   ghcr.io/taylorcjensen/briefkit/publish-server:latest
 ```
 
@@ -124,6 +125,7 @@ services:
       BRIEFKIT_DOMAIN: https://briefs.example.com
       BRIEFKIT_API_KEYS: key-one,key-two
       BRIEFKIT_DEFAULT_DURATION: 3mo
+      BRIEFKIT_DEFAULT_INDEXED: "true"
 ```
 
 Put a reverse proxy in front of the container if the public domain should terminate TLS or listen on ports 80/443. The container itself listens on port `8080`.
@@ -143,12 +145,15 @@ The GitHub Actions workflow publishes multi-architecture images to `ghcr.io/tayl
 | `BRIEFKIT_DOMAIN` | No | `http://localhost:8080` | Public base URL returned after publish |
 | `BRIEFKIT_API_KEYS` | Yes | none | Comma-separated valid API keys |
 | `BRIEFKIT_DEFAULT_DURATION` | No | `3mo` | Used when the client omits `--duration` |
+| `BRIEFKIT_DEFAULT_INDEXED` | No | `true` | Whether published briefs appear on the homepage when the client does not override indexing |
 | `BRIEFKIT_STORAGE_DIR` | No | `/briefs` | Container storage path |
 | `BRIEFKIT_MAX_BODY_BYTES` | No | `52428800` | Maximum JSON upload size |
 
 `BRIEFKIT_API_KEYS` is a comma-separated allowlist. There are no user accounts; use separate keys if you want to track or rotate access by person or machine.
 
 The storage directory should be a bind mount or Docker volume if you want briefs to survive container replacement. The image declares `/briefs`; you decide what host path or volume maps there.
+
+The server homepage at `/` lists non-expired indexed briefs, sorted newest first. Use `BRIEFKIT_DEFAULT_INDEXED=false` if briefs should be hidden from the homepage unless the client opts in.
 
 ### Configure the CLI
 
@@ -180,11 +185,15 @@ You can also pass `--target` and `--api-key` directly to `publish` or `unpublish
 briefkit publish /path/to/report
 briefkit publish /path/to/report --duration 30d
 briefkit publish /path/to/report --duration forever
+briefkit publish /path/to/report --indexed
+briefkit publish /path/to/report --no-indexed
 briefkit unpublish article-title-slug
 briefkit unpublish https://briefs.example.com/article-title-slug/
 ```
 
 Durations support `d`, `w`, `mo`, `y`, and `forever`. If `--duration` is omitted, the server decides using `BRIEFKIT_DEFAULT_DURATION`; if that is also unset, the server uses `3mo`.
+
+Indexing controls whether a brief appears on the server homepage. If neither `--indexed` nor `--no-indexed` is supplied, the server decides using `BRIEFKIT_DEFAULT_INDEXED`; if that is also unset, the server indexes briefs.
 
 Expired briefs return 404 and are deleted by the server cleanup loop. Briefs set to `forever` can be removed with `briefkit unpublish`.
 
