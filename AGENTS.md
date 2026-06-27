@@ -2,6 +2,19 @@
 
 Use these rules when creating reports with Briefkit. They are for agents, not end-user README content.
 
+## Release and publishing rules
+
+Do not manually run `npm publish` or publish the Docker container from a local machine. NPM package publishing and publish-server container publishing are handled by GitHub Actions.
+
+For releases:
+
+1. Update `package.json` to the next version.
+2. Commit the version and code changes.
+3. Create and push a matching version tag, e.g. `v0.1.5` for package version `0.1.5`.
+4. Let GitHub Actions publish the npm package and container image.
+
+The version tag must match the package version exactly with a leading `v`.
+
 ## Writing and layout best practices
 
 ### Lead with the decision

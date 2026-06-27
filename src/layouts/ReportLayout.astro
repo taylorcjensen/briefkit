@@ -18,6 +18,8 @@ export interface Props {
   reportTitle?: string;
   pages?: NavPage[];
   headings?: Heading[];
+  description?: string;
+  image?: string;
   author?: string;
   buildTime?: string;
   colorMode?: 'auto' | 'light' | 'dark';
@@ -28,6 +30,8 @@ const {
   reportTitle,
   pages = [],
   headings = [],
+  description,
+  image,
   author,
   buildTime,
   colorMode = 'auto',
@@ -37,6 +41,10 @@ const footerPrefix = author ? `Made by ${author} with` : 'Made with';
 const briefkitUrl = 'https://github.com/taylorcjensen/briefkit';
 const hasPageNav = pages.length > 1;
 const hasToc = headings.length > 0;
+const pageTitle = reportTitle && reportTitle !== title ? `${title} · ${reportTitle}` : title;
+const isLocalPreviewUrl = Astro.url.hostname === 'localhost' || Astro.url.hostname === '127.0.0.1';
+const canonicalUrl = isLocalPreviewUrl ? undefined : Astro.url.href;
+const previewImageUrl = image && !isLocalPreviewUrl ? new URL(image, Astro.url).href : undefined;
 ---
 
 <!doctype html>
@@ -44,7 +52,18 @@ const hasToc = headings.length > 0;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{reportTitle && reportTitle !== title ? `${title} · ${reportTitle}` : title}</title>
+    <title>{pageTitle}</title>
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+    {description && <meta name="description" content={description} />}
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content={pageTitle} />
+    {description && <meta property="og:description" content={description} />}
+    {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
+    {previewImageUrl && <meta property="og:image" content={previewImageUrl} />}
+    <meta name="twitter:card" content={previewImageUrl ? 'summary_large_image' : 'summary'} />
+    <meta name="twitter:title" content={pageTitle} />
+    {description && <meta name="twitter:description" content={description} />}
+    {previewImageUrl && <meta name="twitter:image" content={previewImageUrl} />}
     <style is:inline set:html={reportCss}></style>
   </head>
   <body>

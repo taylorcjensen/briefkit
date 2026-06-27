@@ -11,6 +11,7 @@ export interface WorkspaceOptions {
   colorMode: ColorMode;
   outDir?: string;
   port?: number;
+  site?: string;
 }
 
 export interface WorkspaceInfo {
@@ -41,13 +42,15 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
       file: page.file,
       route: page.route,
       title: page.title,
+      description: page.description,
+      image: page.image,
       headings: page.headings,
       layout: page.layout,
       customLayout: page.customLayout,
     })),
   });
 
-  await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir), 'utf8');
+  await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
 
   for (const page of report.pages) {
     await writeProcessedPage(workspaceDir, page);
@@ -64,7 +67,7 @@ function workspacePath(reportDir: string, port?: number): string {
   return path.join(os.tmpdir(), 'briefkit', `${slug}-${hash}${suffix}`);
 }
 
-function astroConfig(reportDir: string, outDir: string, workspaceDir: string): string {
+function astroConfig(reportDir: string, outDir: string, workspaceDir: string, site?: string): string {
   const packageRoot = path.resolve(path.join(import.meta.dirname, '..', '..'));
   const publicDir = path.join(reportDir, 'public');
   const cacheDir = path.join(workspaceDir, '.astro');
@@ -86,6 +89,7 @@ function yamlPlugin() {
 
 export default defineConfig({
   output: 'static',
+  site: ${JSON.stringify(site)},
   outDir: ${JSON.stringify(outDir)},
   publicDir: ${JSON.stringify(publicDir)},
   cacheDir: ${JSON.stringify(cacheDir)},
@@ -276,6 +280,8 @@ function firstDifferentIndex(left, right) {
   reportTitle={reportData.title}
   pages={navPages}
   headings={currentPage.headings}
+  description={currentPage.description}
+  image={currentPage.image}
   author={reportData.author}
   buildTime={reportData.buildTime}
   colorMode={reportData.colorMode}

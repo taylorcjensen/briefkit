@@ -40,7 +40,7 @@ export async function loadReport(reportDirInput: string): Promise<ReportInfo> {
   const indexPage = pages.find((page) => page.route === '/') ?? pages[0];
   const title = config.title ?? indexPage?.title ?? path.basename(reportDir);
 
-  return { reportDir, config, title, pages };
+  return { reportDir, config, title, pages: applyReportSeoDefaults(pages, config) };
 }
 
 async function loadConfig(reportDir: string): Promise<BriefkitConfig> {
@@ -103,6 +103,8 @@ async function readPage(reportDir: string, file: string, config?: PageConfigEntr
   const title = config?.title ?? stringValue(data.title) ?? titleFromContent(parsed.content) ?? titleFromFile(file);
   const route = normalizeRoute(config?.route ?? routeFromFile(file));
   const layout = normalizeLayout(data.layout);
+  const description = config?.description ?? stringValue(data.description) ?? descriptionFromContent(parsed.content);
+  const image = config?.image ?? stringValue(data.image) ?? firstImageFromContent(parsed.content);
 
   return {
     file,
@@ -110,6 +112,8 @@ async function readPage(reportDir: string, file: string, config?: PageConfigEntr
     route,
     title,
     hidden: data.hidden === true,
+    description,
+    image,
     headings: extractHeadings(parsed.content),
     layout,
     customLayout: stringValue(data.customLayout),
@@ -118,6 +122,14 @@ async function readPage(reportDir: string, file: string, config?: PageConfigEntr
 
 function normalizePageEntries(entries: (string | PageConfigEntry)[]): PageConfigEntry[] {
   return entries.map((entry) => typeof entry === 'string' ? { file: entry } : entry);
+}
+
+function applyReportSeoDefaults(pages: PageInfo[], config: BriefkitConfig): PageInfo[] {
+  return pages.map((page) => ({
+    ...page,
+    description: page.description ?? config.description,
+    image: page.image ?? config.image,
+  }));
 }
 
 function normalizeRelativePath(file: string): string {
@@ -168,6 +180,43 @@ function titleFromContent(content: string): string | undefined {
   const match = /^#\s+(.+)$/m.exec(content);
   if (!match) return undefined;
   return stripMdx(match[1].replace(/\s+#+\s*$/, '').trim());
+}
+
+function descriptionFromContent(content: string): string | undefined {
+  const text = stripMdx(removeNonProseContent(content)).replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)/g)?.slice(0, 3).join(' ').trim();
+  return truncateDescription(sentences || text);
+}
+
+function removeNonProseContent(content: string): string {
+  return content
+    .replace(/^---[\s\S]*?---\s*/m, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^import\s.+$/gm, '')
+    .replace(/^export\s.+$/gm, '')
+    .replace(/^#{1,6}\s+.+$/gm, '')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/<img\b[^>]*>/gi, '');
+}
+
+function truncateDescription(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length <= 220 ? normalized : `${normalized.slice(0, 217).replace(/\s+\S*$/, '')}...`;
+}
+
+function firstImageFromContent(content: string): string | undefined {
+  return firstMarkdownImage(content) ?? firstHtmlImage(content);
+}
+
+function firstMarkdownImage(content: string): string | undefined {
+  const match = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/.exec(content);
+  return match?.[1];
+}
+
+function firstHtmlImage(content: string): string | undefined {
+  const match = /<img\b[^>]*\ssrc=["']([^"']+)["'][^>]*>/i.exec(content);
+  return match?.[1];
 }
 
 function capitalize(value: string): string {

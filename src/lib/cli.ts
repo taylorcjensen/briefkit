@@ -17,6 +17,7 @@ interface ParsedArgs {
   target?: string;
   apiKey?: string;
   duration?: string;
+  indexed?: boolean;
   brief?: string;
 }
 
@@ -53,6 +54,11 @@ export async function runCli(argv: string[]): Promise<void> {
   }
 
   const report = await loadReport(args.reportDir);
+  const publishConfig = args.command === 'publish' ? await loadPublishConfig() : undefined;
+  const publishTarget = args.command === 'publish' ? normalizeTarget(args.target ?? publishConfig?.target) : undefined;
+  const publishApiKey = args.command === 'publish' ? args.apiKey ?? publishConfig?.apiKey : undefined;
+  if (args.command === 'publish' && !publishTarget) throw new Error('Publish target is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
+  if (args.command === 'publish' && !publishApiKey) throw new Error('Publish API key is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
   const shouldCleanPublishOutDir = args.command === 'publish' && !args.outDir;
   const outDir = shouldCleanPublishOutDir ? await fs.mkdtemp(path.join(os.tmpdir(), 'briefkit-publish-')) : args.outDir;
   const workspace = await createWorkspace(report, {
@@ -60,6 +66,7 @@ export async function runCli(argv: string[]): Promise<void> {
     colorMode: args.colorMode,
     outDir,
     port: args.port,
+    site: publishTarget,
   });
 
   if (args.command === 'dev') {
@@ -79,13 +86,10 @@ export async function runCli(argv: string[]): Promise<void> {
   await ensurePublicFallback(report.reportDir, workspace.outDir);
 
   if (args.command === 'publish') {
-    const publishConfig = await loadPublishConfig();
-    const target = normalizeTarget(args.target ?? publishConfig.target);
-    const apiKey = args.apiKey ?? publishConfig.apiKey;
-    if (!target) throw new Error('Publish target is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
-    if (!apiKey) throw new Error('Publish API key is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
+    const target = publishTarget!;
+    const apiKey = publishApiKey!;
     const files = await collectPublishFiles(workspace.outDir);
-    const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, files });
+    const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, indexed: args.indexed, files });
     console.log('Briefkit publish complete');
     console.log(`Report: ${report.reportDir}`);
     console.log(`URL: ${result.url}`);
@@ -164,6 +168,16 @@ function parseArgs(args: string[]): ParsedArgs {
     if (arg === '--duration') {
       parsed.duration = parseDuration(requiredOptionValue(args[index + 1], '--duration'));
       index += 2;
+      continue;
+    }
+    if (arg === '--indexed') {
+      parsed.indexed = true;
+      index += 1;
+      continue;
+    }
+    if (arg === '--no-indexed') {
+      parsed.indexed = false;
+      index += 1;
       continue;
     }
     throw new Error(`Unknown option: ${arg}`);
@@ -309,14 +323,14 @@ async function unpublishBrief(input: { target: string; apiKey: string; slug: str
   return { deleted: true, slug: payload.slug };
 }
 
-async function publishBrief(input: { target: string; apiKey: string; title: string; duration?: string; files: PublishFile[] }): Promise<{ url: string; slug: string; expiresAt: string | null }> {
+async function publishBrief(input: { target: string; apiKey: string; title: string; duration?: string; indexed?: boolean; files: PublishFile[] }): Promise<{ url: string; slug: string; expiresAt: string | null }> {
   const response = await fetch(`${input.target}/api/publish`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${input.apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ title: input.title, duration: input.duration, files: input.files }),
+    body: JSON.stringify({ title: input.title, duration: input.duration, indexed: input.indexed, files: input.files }),
   });
   const payload = await response.json().catch(() => ({})) as { error?: string; url?: string; slug?: string; expiresAt?: string | null };
   if (!response.ok) throw new Error(payload.error ?? `Publish failed with HTTP ${response.status}`);
@@ -330,7 +344,7 @@ function printHelp(): void {
 Usage:
   briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
   briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
-  briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
+  briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
   briefkit publish-config set --target https://briefs.example.com --api-key KEY
 `);

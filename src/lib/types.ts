@@ -4,6 +4,8 @@ export interface PageConfigEntry {
   file: string;
   title?: string;
   route?: string;
+  description?: string;
+  image?: string;
 }
 
 export type PageConfig = string | PageConfigEntry;
@@ -11,6 +13,8 @@ export type PageConfig = string | PageConfigEntry;
 export interface BriefkitConfig {
   title?: string;
   author?: string;
+  description?: string;
+  image?: string;
   pages?: PageConfig[];
 }
 
@@ -26,6 +30,8 @@ export interface PageInfo {
   route: string;
   title: string;
   hidden: boolean;
+  description?: string;
+  image?: string;
   headings: HeadingInfo[];
   layout: 'report' | 'none' | 'custom';
   customLayout?: string;
