@@ -2,11 +2,6 @@ name: "Release: GHCR server image"
 run-name: "Release ${{ github.event.release.tag_name || github.ref_name }} to GHCR"
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - publish-server/**
-      - .github/workflows/publish-container.yml
   release:
     types: [published]
   workflow_dispatch:
