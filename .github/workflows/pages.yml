@@ -1,5 +1,5 @@
-name: Release: GitHub Pages
-run-name: Release ${{ github.event.release.tag_name || github.ref_name }} to pages
+name: "Release: GitHub Pages"
+run-name: "Release ${{ github.event.release.tag_name || github.ref_name }} to pages"
 
 on:
   release:

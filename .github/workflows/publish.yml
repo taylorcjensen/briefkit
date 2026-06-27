@@ -1,5 +1,5 @@
-name: Release: npm package
-run-name: Release ${{ github.event.release.tag_name || github.ref_name }} to npm
+name: "Release: npm package"
+run-name: "Release ${{ github.event.release.tag_name || github.ref_name }} to npm"
 
 on:
   release:
