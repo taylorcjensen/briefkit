@@ -1,8 +1,9 @@
-name: Publish README Briefkit page
+name: Release: GitHub Pages
+run-name: Release ${{ github.event.release.tag_name || github.ref_name }} to pages
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
