@@ -82,7 +82,9 @@ Build/dev generated Astro workspaces live under the OS temp directory. The repor
 
 ## Publishing briefs
 
-Briefkit includes a tiny Docker publish server in `publish-server/`. It accepts built static files from `briefkit publish`, stores them under `/briefs`, and serves each brief at:
+Briefkit includes a small Docker publish server in `publish-server/`. The CLI builds a report, uploads the generated static files, and the server stores them under `/briefs`.
+
+Published URLs use the configured public domain and the report title slug:
 
 ```text
 {configured-domain}/{article-title-slug}/
@@ -90,11 +92,14 @@ Briefkit includes a tiny Docker publish server in `publish-server/`. It accepts 
 
 Duplicate titles receive numeric suffixes: `article-title-slug-2`, `article-title-slug-3`, and so on.
 
-Run the server from the published image:
+### Run the publish server
+
+Use the published multi-architecture image:
 
 ```bash
 docker run -d \
   --name briefkit-publish \
+  --restart unless-stopped \
   -p 8080:8080 \
   -v /path/on/host/briefs:/briefs \
   -e BRIEFKIT_DOMAIN=https://briefs.example.com \
@@ -103,7 +108,27 @@ docker run -d \
   ghcr.io/taylorcjensen/briefkit/publish-server:latest
 ```
 
-Or build it locally:
+Docker Compose example:
+
+```yaml
+services:
+  briefkit-publish:
+    image: ghcr.io/taylorcjensen/briefkit/publish-server:latest
+    container_name: briefkit-publish
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /path/on/host/briefs:/briefs
+    environment:
+      BRIEFKIT_DOMAIN: https://briefs.example.com
+      BRIEFKIT_API_KEYS: key-one,key-two
+      BRIEFKIT_DEFAULT_DURATION: 3mo
+```
+
+Put a reverse proxy in front of the container if the public domain should terminate TLS or listen on ports 80/443. The container itself listens on port `8080`.
+
+Or build the image locally:
 
 ```bash
 docker build -t briefkit-publish-server ./publish-server
@@ -111,7 +136,7 @@ docker build -t briefkit-publish-server ./publish-server
 
 The GitHub Actions workflow publishes multi-architecture images to `ghcr.io/taylorcjensen/briefkit/publish-server` on `main`, releases, and manual dispatches.
 
-Server environment:
+### Server configuration
 
 | Variable | Required | Default | Meaning |
 |---|---:|---:|---|
@@ -121,13 +146,35 @@ Server environment:
 | `BRIEFKIT_STORAGE_DIR` | No | `/briefs` | Container storage path |
 | `BRIEFKIT_MAX_BODY_BYTES` | No | `52428800` | Maximum JSON upload size |
 
-Configure the client once:
+`BRIEFKIT_API_KEYS` is a comma-separated allowlist. There are no user accounts; use separate keys if you want to track or rotate access by person or machine.
+
+The storage directory should be a bind mount or Docker volume if you want briefs to survive container replacement. The image declares `/briefs`; you decide what host path or volume maps there.
+
+### Configure the CLI
+
+Save the target and API key once:
 
 ```bash
 briefkit publish-config set --target https://briefs.example.com --api-key key-one
 ```
 
-Then publish:
+If the key contains spaces or shell metacharacters, quote it:
+
+```bash
+briefkit publish-config set --target https://briefs.example.com --api-key 'key with special chars'
+```
+
+Use space-separated options. Briefkit does not currently support `--api-key=value` or `--target=value`.
+
+The config is stored at:
+
+```text
+~/.config/briefkit/publish.json
+```
+
+You can also pass `--target` and `--api-key` directly to `publish` or `unpublish` to override the saved config.
+
+### Publish and unpublish
 
 ```bash
 briefkit publish /path/to/report
@@ -137,7 +184,9 @@ briefkit unpublish article-title-slug
 briefkit unpublish https://briefs.example.com/article-title-slug/
 ```
 
-Durations support `d`, `w`, `mo`, `y`, and `forever`. Expired briefs return 404 and are deleted by the server cleanup loop. Briefs set to `forever` can be removed with `briefkit unpublish`.
+Durations support `d`, `w`, `mo`, `y`, and `forever`. If `--duration` is omitted, the server decides using `BRIEFKIT_DEFAULT_DURATION`; if that is also unset, the server uses `3mo`.
+
+Expired briefs return 404 and are deleted by the server cleanup loop. Briefs set to `forever` can be removed with `briefkit unpublish`.
 
 ## Quick start: plain Markdown
 
