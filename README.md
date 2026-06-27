@@ -32,6 +32,7 @@ Then run:
 ```bash
 briefkit dev /path/to/report
 briefkit build /path/to/report
+briefkit publish /path/to/report
 ```
 
 ### From this repository
@@ -62,16 +63,81 @@ npm run briefkit -- build examples/basic-report
 ```bash
 briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
 briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
+briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--target https://briefs.example.com] [--api-key KEY]
+briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
+briefkit publish-config set --target https://briefs.example.com --api-key KEY
 ```
 
 | Command | Use it for | Output |
 |---|---|---|
 | `dev` | Primary authoring workflow | Live Astro dev server |
 | `build` | Saved static artifact | `{report-folder}/brief/` by default |
+| `publish` | Build and upload a static brief | Hosted URL from your publish server |
+| `unpublish` | Delete a hosted brief by URL or slug | Removed static brief |
+| `publish-config` | Save a default publish target and API key | `~/.config/briefkit/publish.json` |
 
 `briefkit dev` opens the browser by default. Agent workflows should not open a separate browser tab after running it. Use `--no-open` only when you explicitly do not want a browser opened.
 
 Build/dev generated Astro workspaces live under the OS temp directory. The report folder only needs to contain your source files and optional build output.
+
+## Publishing briefs
+
+Briefkit includes a tiny Docker publish server in `publish-server/`. It accepts built static files from `briefkit publish`, stores them under `/briefs`, and serves each brief at:
+
+```text
+{configured-domain}/{article-title-slug}/
+```
+
+Duplicate titles receive numeric suffixes: `article-title-slug-2`, `article-title-slug-3`, and so on.
+
+Run the server from the published image:
+
+```bash
+docker run -d \
+  --name briefkit-publish \
+  -p 8080:8080 \
+  -v /path/on/host/briefs:/briefs \
+  -e BRIEFKIT_DOMAIN=https://briefs.example.com \
+  -e BRIEFKIT_API_KEYS=key-one,key-two \
+  -e BRIEFKIT_DEFAULT_DURATION=3mo \
+  ghcr.io/taylorcjensen/briefkit/publish-server:latest
+```
+
+Or build it locally:
+
+```bash
+docker build -t briefkit-publish-server ./publish-server
+```
+
+The GitHub Actions workflow publishes multi-architecture images to `ghcr.io/taylorcjensen/briefkit/publish-server` on `main`, releases, and manual dispatches.
+
+Server environment:
+
+| Variable | Required | Default | Meaning |
+|---|---:|---:|---|
+| `BRIEFKIT_DOMAIN` | No | `http://localhost:8080` | Public base URL returned after publish |
+| `BRIEFKIT_API_KEYS` | Yes | none | Comma-separated valid API keys |
+| `BRIEFKIT_DEFAULT_DURATION` | No | `3mo` | Used when the client omits `--duration` |
+| `BRIEFKIT_STORAGE_DIR` | No | `/briefs` | Container storage path |
+| `BRIEFKIT_MAX_BODY_BYTES` | No | `52428800` | Maximum JSON upload size |
+
+Configure the client once:
+
+```bash
+briefkit publish-config set --target https://briefs.example.com --api-key key-one
+```
+
+Then publish:
+
+```bash
+briefkit publish /path/to/report
+briefkit publish /path/to/report --duration 30d
+briefkit publish /path/to/report --duration forever
+briefkit unpublish article-title-slug
+briefkit unpublish https://briefs.example.com/article-title-slug/
+```
+
+Durations support `d`, `w`, `mo`, `y`, and `forever`. Expired briefs return 404 and are deleted by the server cleanup loop. Briefs set to `forever` can be removed with `briefkit unpublish`.
 
 ## Quick start: plain Markdown
 
