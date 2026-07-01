@@ -53,7 +53,7 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
   await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
 
   for (const page of report.pages) {
-    await writeProcessedPage(workspaceDir, page);
+    await writeProcessedPage(workspaceDir, page, report.title);
     await writePageWrapper(workspaceDir, page);
   }
 
@@ -126,10 +126,11 @@ function routeToWrapperPath(workspaceDir: string, route: string): string {
   return path.join(workspaceDir, 'src', 'pages', routeName, 'index.astro');
 }
 
-async function writeProcessedPage(workspaceDir: string, page: PageInfo): Promise<void> {
+async function writeProcessedPage(workspaceDir: string, page: PageInfo, reportTitle: string): Promise<void> {
   const source = await fs.readFile(page.absolutePath, 'utf8');
   const parsed = matter(source);
-  const contentWithoutDuplicateTitle = removeDuplicateTitleHeading(parsed.content, page.title);
+  warnIfReportPageStartsWithH1(page, parsed.content);
+  const contentWithoutDuplicateTitle = removeDuplicateTitleHeading(parsed.content, [page.title, reportTitle]);
   const normalizedContent = normalizeSlashSpacingInMdx(injectHtmlTableColgroups(contentWithoutDuplicateTitle));
   const processed = matter.stringify(normalizedContent, parsed.data);
   const targetPath = processedPagePath(page, workspaceDir);
@@ -143,16 +144,34 @@ function processedPagePath(page: PageInfo, workspaceDir?: string): string {
   return path.join(root, 'src', 'processed', processedFile);
 }
 
-function removeDuplicateTitleHeading(content: string, title: string): string {
+function warnIfReportPageStartsWithH1(page: PageInfo, content: string): void {
+  if (page.layout !== 'report') return;
+  const headingText = firstH1Text(content);
+  if (!headingText) return;
+  console.warn(`Briefkit warning: ${page.file} starts with an H1 ("${headingText}"). The report layout already renders the page H1 ("${page.title}"). Move this text to frontmatter/config title, change it to ##, or start the page with content.`);
+}
+
+function firstH1Text(content: string): string | undefined {
+  const markdownMatch = /^#\s+(.+)\n+/.exec(content);
+  if (markdownMatch) return stripHeadingText(markdownMatch[1]);
+
+  const htmlMatch = /^<h1[^>]*>(.*?)<\/h1>\s*/is.exec(content);
+  if (htmlMatch) return stripHeadingText(htmlMatch[1].replace(/<[^>]+>/g, ''));
+
+  return undefined;
+}
+
+function removeDuplicateTitleHeading(content: string, titles: string[]): string {
+  const normalizedTitles = new Set(titles.map(normalizeTitle));
   const markdownHeading = /^#\s+(.+)\n+/;
   const markdownMatch = markdownHeading.exec(content);
-  if (markdownMatch && normalizeTitle(markdownMatch[1]) === normalizeTitle(title)) {
+  if (markdownMatch && normalizedTitles.has(normalizeTitle(markdownMatch[1]))) {
     return content.slice(markdownMatch[0].length);
   }
 
   const htmlHeading = /^<h1[^>]*>(.*?)<\/h1>\s*/is;
   const htmlMatch = htmlHeading.exec(content);
-  if (htmlMatch && normalizeTitle(htmlMatch[1].replace(/<[^>]+>/g, '')) === normalizeTitle(title)) {
+  if (htmlMatch && normalizedTitles.has(normalizeTitle(htmlMatch[1].replace(/<[^>]+>/g, '')))) {
     return content.slice(htmlMatch[0].length);
   }
 
@@ -160,7 +179,11 @@ function removeDuplicateTitleHeading(content: string, title: string): string {
 }
 
 function normalizeTitle(value: string): string {
-  return value.replace(/\s+#+\s*$/, '').replace(/[{}*_`~\[\]]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return stripHeadingText(value).toLowerCase();
+}
+
+function stripHeadingText(value: string): string {
+  return value.replace(/\s+#+\s*$/, '').replace(/[{}*_`~\[\]]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function normalizeSlashSpacingInMdx(content: string): string {

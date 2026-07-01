@@ -11,6 +11,8 @@ Use Briefkit to turn research or analysis into a local static report site. The r
 
 Briefkit reports can start as plain Markdown or MDX. Use `README.md` for the fastest portable report; use `index.mdx` when the report needs components, imported data, or local visuals. Write local report sources in a small folder, then run `briefkit dev`. Briefkit opens the browser itself. Do not separately open the browser or use `show_user` for the report unless the user explicitly asks.
 
+Default report-layout pages must not start with an H1. The layout renders the page H1 from frontmatter/config title; page content should start with a callout, paragraph, table, visual, or `##` section. Briefkit warns when a default-layout page starts with Markdown `# ...` or HTML `<h1>`. Exact duplicate H1s matching the page title or report title are automatically removed from rendered output, but still indicate source cleanup is needed.
+
 ## When to use
 
 Use this skill for:
@@ -73,7 +75,9 @@ Do not use Briefkit for:
 
 6. Iterate on MDX/data files. The dev server live-reloads.
 
-7. Only build when the user wants a saved artifact:
+7. Use `briefkit dev` to show the user local reports. Do not run `briefkit build` just to preview or validate a local report unless the user specifically asks for a built artifact. In normal work, `build` is only needed as part of publish or when the user explicitly requests saved static output.
+
+   If a saved artifact is explicitly requested:
 
    ```bash
    briefkit build "$REPORT"
@@ -127,7 +131,9 @@ Rules:
 ## Markdown quick-start
 
 ```md
-# Report Title
+---
+title: Report Title
+---
 
 ## Verdict
 
@@ -329,6 +335,11 @@ import CustomMatrix from '@report/components/CustomMatrix.astro';
 
 Keep local components report-specific. Only upstream patterns that are broadly reusable.
 
+## Publishing discipline
+
+- Use the publish server's default duration unless the user explicitly requests a different expiration.
+- Do not pass `--duration` to `briefkit publish` by habit or from examples; only pass it when the requested duration matters.
+
 ## Dev-server discipline
 
 - `briefkit dev` opens the browser in the background on macOS.
@@ -344,20 +355,15 @@ Keep local components report-specific. Only upstream patterns that are broadly r
 
 ## Validation
 
-Before saying the report is ready, run at least:
+For user-facing local previews, `briefkit dev "$REPORT"` is the normal validation path. Do not run `briefkit build` unless the user specifically asks for a static artifact or you are publishing.
 
-```bash
-briefkit build "$REPORT"
-```
-
-For local repo development:
+For local repo development, run code checks as appropriate:
 
 ```bash
 npm run typecheck
-/Users/taylorjensen/Code/briefkit/bin/briefkit.js build "$REPORT"
 ```
 
-If build fails, fix the source or component; do not hand-edit generated `brief/` output.
+If dev/build/publish fails, fix the source or component; do not hand-edit generated `brief/` output.
 
 ## Common fixes
 
@@ -376,5 +382,5 @@ Keep the response short. Give:
 
 - report path;
 - dev URL if running;
-- build output path if built;
+- build output path only if the user specifically requested a build or publish;
 - any important caveats.
