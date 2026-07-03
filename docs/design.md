@@ -75,7 +75,7 @@ Example:
 title: Vendor Decision Brief
 ---
 
-import { Callout, BriefTable, Tooltip } from "briefkit";
+import { Callout, BriefTable, Mermaid, Tooltip } from "briefkit";
 import WeirdMatrix from "@report/components/WeirdMatrix.astro";
 import risks from "@report/data/risks.yaml";
 
@@ -408,6 +408,15 @@ Rules:
 - if no `rows`/`columns` are provided, render children;
 - if both data and children are provided, error rather than silently choosing one.
 
+Mermaid diagrams should work in both portable Markdown and richer MDX. Fenced `mermaid` code blocks are the lowest-friction path; the `Mermaid` component adds titles, captions, and generated-source ergonomics without forcing a new schema.
+
+```mermaid
+flowchart TD
+  Research[Research] --> Decision{Decision ready?}
+  Decision -->|Yes| Publish[Publish]
+  Decision -->|No| Evidence[Gather more evidence]
+```
+
 Tooltips should be inline by default. Reports are throwaway artifacts, so the fastest and clearest authoring path is to define the explanation where the term appears.
 
 Example:
@@ -428,6 +437,7 @@ Briefkit v0 should keep the primitive component set intentionally small:
 - `Callout`
 - `Tooltip`
 - `BriefTable`
+- `Mermaid`
 
 Other report structures are documented patterns built from those primitives:
 
@@ -437,6 +447,7 @@ Other report structures are documented patterns built from those primitives:
 - facts table: `BriefTable`
 - score matrix: `BriefTable`
 - decision rules: `Callout` or `BriefTable`
+- system diagrams: fenced `mermaid` block or `Mermaid`
 
 Modules should be useful primitives, not a rigid report schema.
 

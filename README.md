@@ -4,7 +4,7 @@
 
 Briefkit turns Markdown or MDX folders into local, static, decision-oriented report websites.
 
-It is built for agent-authored briefs: research summaries, comparisons, evidence packs, audits, risk registers, status reports, and one-off decision pages. The source stays simple and portable. Briefkit supplies the shared shell: layout, sidebar navigation, heading TOC, dark/light/auto theme, callouts, tooltips, and table normalization.
+It is built for agent-authored briefs: research summaries, comparisons, evidence packs, audits, risk registers, status reports, and one-off decision pages. The source stays simple and portable. Briefkit supplies the shared shell: layout, sidebar navigation, heading TOC, dark/light/auto theme, callouts, tooltips, Mermaid diagrams, and table normalization.
 
 Briefkit is not an app framework, dashboard backend, CMS, or structured-data prison. The goal is to keep nuanced analysis easy to write while making the result readable enough to hand to a human.
 
@@ -16,6 +16,7 @@ Briefkit is not an app framework, dashboard backend, CMS, or structured-data pri
 | Portable source | Use `README.md`, `index.md`, or `pages/*.md` |
 | Full components | Use `index.mdx` or `pages/*.mdx` |
 | Scannable tables | Markdown tables are automatically styled and width-normalized |
+| Mermaid diagrams | Use fenced `mermaid` blocks or the `Mermaid` MDX component |
 | Decision artifacts | Use callouts, dense tables, sidebars, and heading TOCs |
 | Throwaway output | Build static files to `{report-folder}/brief/` |
 
@@ -268,7 +269,7 @@ export default {
 title: Vendor Decision Brief
 ---
 
-import { Callout, BriefTable, Tooltip } from 'briefkit';
+import { Callout, BriefTable, Mermaid, Tooltip } from 'briefkit';
 import risks from '@report/data/risks.yaml';
 
 <Callout type="info" title="Verdict">
@@ -290,6 +291,17 @@ Pick Option A unless the extra evidence from Option B would change the decision.
 />
 
 Use a <Tooltip term="throwaway report">purpose-built static site for one decision or research result.</Tooltip>
+
+<Mermaid
+  title="Preferred architecture"
+  chart={`flowchart TD
+    UI[Astro / Vue / Slidev / SPA UI<br/>browser / kiosk / tablet]
+    Bridge[Local or on-site bridge<br/>Node / Electron main / Tauri sidecar]
+    Network[Production network<br/>OSC targets / Eos / QLab / sACN]
+    UI -->|WebSocket or HTTPS| Bridge
+    Bridge -->|UDP / TCP on selected NIC| Network
+  `}
+/>
 ```
 
 ## Report folder shape
@@ -357,6 +369,7 @@ Briefkit v0 intentionally keeps the primitive set small.
 | `Callout` | Verdicts, notes, caveats, warnings, source notes |
 | `Tooltip` | Inline explanations for jargon and acronyms |
 | `BriefTable` | Explicit tables with captions, sticky columns, or data rows |
+| `Mermaid` | Flowcharts, sequence diagrams, state diagrams, and other Mermaid visuals |
 
 ### Callout
 
@@ -414,6 +427,33 @@ import rows from '@report/data/risks.yaml';
 ```
 
 Ordinary Markdown tables are enhanced automatically. Use `BriefTable` when you need a caption, sticky first column, data rows, or explicit control.
+
+### Mermaid
+
+Use a fenced `mermaid` block in Markdown or MDX when portability matters:
+
+```mermaid
+flowchart TD
+  Start[Decision] --> Check{Enough evidence?}
+  Check -->|Yes| Publish[Publish brief]
+  Check -->|No| Research[Do more research]
+```
+
+Use the `Mermaid` component in MDX when you want a title, caption, or data-driven diagram source:
+
+```mdx
+import { Mermaid } from 'briefkit';
+
+<Mermaid
+  title="Decision flow"
+  caption="Rendered client-side with the active Briefkit color theme."
+  chart={`flowchart TD
+    Start[Decision] --> Check{Enough evidence?}
+    Check -->|Yes| Publish[Publish brief]
+    Check -->|No| Research[Do more research]
+  `}
+/>
+```
 
 ## Data and local imports
 

@@ -2,9 +2,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import matter from 'gray-matter';
 import { calculateTableWidths } from './tableWidths.js';
 import type { ColorMode, PageInfo, ReportInfo } from './types.js';
+
+const require = createRequire(import.meta.url);
 
 export interface WorkspaceOptions {
   mode: 'dev' | 'build';
@@ -49,6 +52,7 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
       customLayout: page.customLayout,
     })),
   });
+  await preparePublicDir(workspaceDir, report.reportDir, await reportUsesMermaid(report.reportDir, report.pages));
 
   await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
 
@@ -67,15 +71,98 @@ function workspacePath(reportDir: string, port?: number): string {
   return path.join(os.tmpdir(), 'briefkit', `${slug}-${hash}${suffix}`);
 }
 
+function packageRoot(): string {
+  return path.resolve(path.join(import.meta.dirname, '..', '..'));
+}
+
+async function reportUsesMermaid(reportDir: string, pages: PageInfo[]): Promise<boolean> {
+  const sourceFiles = new Set(pages.map((page) => page.absolutePath));
+  await collectComponentSourceFiles(path.join(reportDir, 'components'), sourceFiles);
+
+  for (const sourceFile of sourceFiles) {
+    const source = await fs.readFile(sourceFile, 'utf8');
+    if (/```\s*mermaid\b/i.test(source) || /<Mermaid(?:\s|>|\/)/.test(source)) return true;
+  }
+  return false;
+}
+
+async function collectComponentSourceFiles(componentDir: string, files: Set<string>): Promise<void> {
+  if (!(await exists(componentDir))) return;
+
+  const entries = await fs.readdir(componentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(componentDir, entry.name);
+    if (entry.isDirectory()) {
+      await collectComponentSourceFiles(entryPath, files);
+    } else if (entry.isFile() && isComponentSourceFile(entry.name)) {
+      files.add(entryPath);
+    }
+  }
+}
+
+function isComponentSourceFile(fileName: string): boolean {
+  return ['.astro', '.tsx', '.jsx', '.mdx', '.md'].includes(path.extname(fileName).toLowerCase());
+}
+
+async function preparePublicDir(workspaceDir: string, reportDir: string, includeMermaidAssets: boolean): Promise<void> {
+  const publicDir = path.join(workspaceDir, 'public');
+  await fs.mkdir(publicDir, { recursive: true });
+  await copyDirIfExists(path.join(reportDir, 'public'), publicDir);
+  if (includeMermaidAssets) await copyMermaidAssets(publicDir);
+}
+
+async function copyMermaidAssets(publicDir: string): Promise<void> {
+  const mermaidDist = path.dirname(require.resolve('mermaid/dist/mermaid.esm.min.mjs'));
+  const mermaidPublicDir = path.join(publicDir, '_briefkit', 'mermaid');
+  await fs.mkdir(mermaidPublicDir, { recursive: true });
+  await fs.copyFile(
+    path.join(mermaidDist, 'mermaid.esm.min.mjs'),
+    path.join(mermaidPublicDir, 'mermaid.esm.min.mjs'),
+  );
+  await copyDir(
+    path.join(mermaidDist, 'chunks', 'mermaid.esm.min'),
+    path.join(mermaidPublicDir, 'chunks', 'mermaid.esm.min'),
+    (filePath) => filePath.endsWith('.mjs'),
+  );
+}
+
+async function copyDirIfExists(source: string, destination: string): Promise<void> {
+  if (await exists(source)) await copyDir(source, destination);
+}
+
+async function copyDir(source: string, destination: string, shouldCopyFile: (filePath: string) => boolean = () => true): Promise<void> {
+  await fs.mkdir(destination, { recursive: true });
+  const entries = await fs.readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyDir(sourcePath, destinationPath, shouldCopyFile);
+    } else if (entry.isFile() && shouldCopyFile(sourcePath)) {
+      await fs.copyFile(sourcePath, destinationPath);
+    }
+  }
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function astroConfig(reportDir: string, outDir: string, workspaceDir: string, site?: string): string {
-  const packageRoot = path.resolve(path.join(import.meta.dirname, '..', '..'));
-  const publicDir = path.join(reportDir, 'public');
+  const packageRootPath = packageRoot();
+  const publicDir = path.join(workspaceDir, 'public');
   const cacheDir = path.join(workspaceDir, '.astro');
   return `import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
 import path from 'node:path';
 import YAML from 'yaml';
-import briefkitTables from ${JSON.stringify(path.join(packageRoot, 'src', 'lib', 'rehypeTables.ts'))};
+import briefkitTables from ${JSON.stringify(path.join(packageRootPath, 'src', 'lib', 'rehypeTables.ts'))};
+import briefkitMermaid from ${JSON.stringify(path.join(packageRootPath, 'src', 'lib', 'rehypeMermaid.ts'))};
 
 function yamlPlugin() {
   return {
@@ -94,19 +181,19 @@ export default defineConfig({
   publicDir: ${JSON.stringify(publicDir)},
   cacheDir: ${JSON.stringify(cacheDir)},
   devToolbar: { enabled: false },
-  markdown: { rehypePlugins: [briefkitTables] },
+  markdown: { rehypePlugins: [briefkitTables, briefkitMermaid] },
   integrations: [mdx()],
   vite: {
     plugins: [yamlPlugin()],
     resolve: {
       alias: {
-        briefkit: ${JSON.stringify(path.join(packageRoot, 'src', 'index.ts'))},
+        briefkit: ${JSON.stringify(path.join(packageRootPath, 'src', 'index.ts'))},
         '@report': ${JSON.stringify(reportDir)}
       }
     },
     server: {
       fs: {
-        allow: [${JSON.stringify(reportDir)}, ${JSON.stringify(packageRoot)}]
+        allow: [${JSON.stringify(reportDir)}, ${JSON.stringify(packageRootPath)}]
       }
     }
   }
@@ -265,7 +352,7 @@ import Content from ${JSON.stringify(pagePath)};
     return `---
 import CustomLayout from ${JSON.stringify(customLayout)};
 import Content from ${JSON.stringify(pagePath)};
-import reportData from ${JSON.stringify(relativeDataImport(page.route))};
+import reportData from ${JSON.stringify(relativeGeneratedImport(page.route, 'report-data.json'))};
 const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
 ---
 <CustomLayout page={currentPage} report={reportData}>
@@ -277,7 +364,7 @@ const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringi
   return `---
 import { ReportLayout } from 'briefkit';
 import Content from ${JSON.stringify(pagePath)};
-import reportData from ${JSON.stringify(relativeDataImport(page.route))};
+import reportData from ${JSON.stringify(relativeGeneratedImport(page.route, 'report-data.json'))};
 const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
 const navPages = reportData.pages.map((page) => ({ title: page.title, route: relativePageHref(currentPage.route, page.route), current: page.file === ${JSON.stringify(pageKey)} }));
 function relativePageHref(fromRoute, toRoute) {
@@ -308,21 +395,21 @@ function firstDifferentIndex(left, right) {
   author={reportData.author}
   buildTime={reportData.buildTime}
   colorMode={reportData.colorMode}
+  assetBase={relativePageHref(currentPage.route, '/')}
 >
   <Content />
 </ReportLayout>
 `;
 }
 
-function relativeDataImport(route: string): string {
-  if (route === '/') return '../generated/report-data.json';
+function relativeGeneratedImport(route: string, fileName: string): string {
+  if (route === '/') return `../generated/${fileName}`;
   const depth = route.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean).length;
-  return `${'../'.repeat(depth + 1)}generated/report-data.json`;
+  return `${'../'.repeat(depth + 1)}generated/${fileName}`;
 }
 
 async function linkNodeModules(workspaceDir: string): Promise<void> {
-  const packageRoot = path.resolve(path.join(import.meta.dirname, '..', '..'));
-  const source = path.join(packageRoot, 'node_modules');
+  const source = path.join(packageRoot(), 'node_modules');
   const target = path.join(workspaceDir, 'node_modules');
   try {
     await fs.symlink(source, target, 'dir');

@@ -147,7 +147,7 @@ Lead with the practical answer.
 | B | Deep analysis | More work |
 ```
 
-Use this when speed and portability matter. Use MDX when you need `Callout`, `BriefTable`, `Tooltip`, imported data, or local components.
+Use this when speed and portability matter. Use MDX when you need `Callout`, `BriefTable`, `Mermaid`, `Tooltip`, imported data, or local components.
 
 ## MDX template
 
@@ -156,7 +156,7 @@ Use this when speed and portability matter. Use MDX when you need `Callout`, `Br
 title: Page Title
 ---
 
-import { Callout, BriefTable, Tooltip } from 'briefkit';
+import { Callout, BriefTable, Mermaid, Tooltip } from 'briefkit';
 import risks from '@report/data/risks.yaml';
 
 <Callout type="info" title="Verdict">
@@ -188,6 +188,15 @@ Lead with the practical answer. Say what to pick, avoid, change, or watch.
 />
 
 A <Tooltip term="jargon term">Plain-English explanation with practical effect.</Tooltip> can explain unfamiliar terms inline.
+
+<Mermaid
+  title="Decision flow"
+  chart={`flowchart TD
+    Start[Decision] --> Check{Enough evidence?}
+    Check -->|Yes| Publish[Publish brief]
+    Check -->|No| Research[Do more research]
+  `}
+/>
 ```
 
 ## Components
@@ -247,6 +256,31 @@ import rows from '@report/data/risks.yaml';
 ```
 
 Prefer tables over prose when rows/columns make scanning easier.
+
+### `Mermaid`
+
+Use for flowcharts, sequence diagrams, state diagrams, and other compact visual explanations. Plain Markdown can use fenced `mermaid` code blocks. MDX can use the component when a diagram needs a title, caption, or generated source.
+
+````md
+```mermaid
+flowchart TD
+  A[Research] --> B{Decision ready?}
+  B -->|Yes| C[Publish]
+  B -->|No| D[Gather more evidence]
+```
+````
+
+```mdx
+<Mermaid
+  title="Decision flow"
+  caption="Rendered with the active Briefkit color theme."
+  chart={`flowchart TD
+    A[Research] --> B{Decision ready?}
+    B -->|Yes| C[Publish]
+    B -->|No| D[Gather more evidence]
+  `}
+/>
+```
 
 ### `Tooltip`
 

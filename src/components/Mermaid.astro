@@ -1,0 +1,37 @@
+---
+export interface Props {
+  /** Mermaid diagram source. */
+  chart?: string;
+  /** Alias for chart, useful when callers prefer generic component data. */
+  code?: string;
+  /** Short label shown above the diagram. */
+  title?: string;
+  /** Optional explanatory text shown below the diagram. */
+  caption?: string;
+  class?: string;
+}
+
+const {
+  chart,
+  code,
+  title,
+  caption,
+  class: className,
+} = Astro.props;
+
+const source = (chart ?? code ?? '').trim();
+
+if (!source) {
+  throw new Error('Mermaid requires a non-empty chart or code prop.');
+}
+
+const accessibleLabel = title ?? caption;
+---
+
+<figure class:list={['bk-mermaid', className]} data-bk-mermaid-source={source} aria-label={accessibleLabel}>
+  {title && <figcaption class="bk-mermaid-title">{title}</figcaption>}
+  <div class="bk-mermaid-stage">
+    <pre class="bk-mermaid-source"><code>{source}</code></pre>
+  </div>
+  {caption && <div class="bk-mermaid-caption">{caption}</div>}
+</figure>

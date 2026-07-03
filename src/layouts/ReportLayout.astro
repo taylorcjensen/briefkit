@@ -23,6 +23,7 @@ export interface Props {
   author?: string;
   buildTime?: string;
   colorMode?: 'auto' | 'light' | 'dark';
+  assetBase?: string;
 }
 
 const {
@@ -35,6 +36,7 @@ const {
   author,
   buildTime,
   colorMode = 'auto',
+  assetBase = './',
 } = Astro.props;
 
 const footerPrefix = author ? `Made by ${author} with` : 'Made with';
@@ -45,6 +47,7 @@ const pageTitle = reportTitle && reportTitle !== title ? `${title} · ${reportTi
 const isLocalPreviewUrl = Astro.url.hostname === 'localhost' || Astro.url.hostname === '127.0.0.1';
 const canonicalUrl = isLocalPreviewUrl ? undefined : Astro.url.href;
 const previewImageUrl = image && !isLocalPreviewUrl ? new URL(image, Astro.url).href : undefined;
+const mermaidRuntimeUrl = `${assetBase}_briefkit/mermaid/mermaid.esm.min.mjs`;
 ---
 
 <!doctype html>
@@ -132,10 +135,106 @@ const previewImageUrl = image && !isLocalPreviewUrl ? new URL(image, Astro.url).
           buttons.forEach((button) => {
             button.toggleAttribute('aria-pressed', button.dataset.bkThemeButton === mode);
           });
+          window.dispatchEvent(new CustomEvent('briefkit:theme-change', { detail: { mode } }));
         };
         apply(document.documentElement.dataset.bkTheme || 'auto');
         buttons.forEach((button) => button.addEventListener('click', () => apply(button.dataset.bkThemeButton)));
       })();
+    </script>
+    <script is:inline type="module" data-bk-mermaid-url={mermaidRuntimeUrl}>
+      const runtimeScript = document.currentScript;
+      const mermaidUrl = runtimeScript?.dataset.bkMermaidUrl || './_briefkit/mermaid/mermaid.esm.min.mjs';
+      const mermaidMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      let mermaidModule;
+      let mermaidRenderToken = 0;
+
+      function isMermaidDarkMode() {
+        const mode = document.documentElement.dataset.bkTheme || 'auto';
+        return mode === 'dark' || (mode === 'auto' && mermaidMediaQuery.matches);
+      }
+
+      function mermaidThemeConfig() {
+        const styles = getComputedStyle(document.documentElement);
+        const color = (name) => styles.getPropertyValue(name).trim();
+        return {
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'base',
+          themeVariables: {
+            background: color('--bk-paper'),
+            mainBkg: color('--bk-paper'),
+            primaryColor: color('--bk-head'),
+            primaryTextColor: color('--bk-ink'),
+            primaryBorderColor: color('--bk-line'),
+            lineColor: color('--bk-muted'),
+            secondaryColor: color('--bk-callout-bg'),
+            tertiaryColor: color('--bk-bg'),
+            fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            darkMode: isMermaidDarkMode(),
+          },
+        };
+      }
+
+      async function loadMermaid() {
+        mermaidModule ??= import(mermaidUrl).then((module) => module.default);
+        return mermaidModule;
+      }
+
+      function createMermaidFallback(source, error) {
+        const message = document.createElement('div');
+        message.className = 'bk-mermaid-error-message';
+        message.textContent = `Mermaid render failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+
+        const fallback = document.createElement('pre');
+        fallback.className = 'bk-mermaid-source bk-mermaid-source-error';
+        fallback.textContent = source;
+        return [message, fallback];
+      }
+
+      async function renderBriefkitMermaid() {
+        const figures = [...document.querySelectorAll('[data-bk-mermaid-source]')];
+        if (figures.length === 0) return;
+
+        const themeKey = isMermaidDarkMode() ? 'dark' : 'light';
+        const token = ++mermaidRenderToken;
+        const mermaid = await loadMermaid();
+        mermaid.initialize(mermaidThemeConfig());
+
+        for (const [index, figure] of figures.entries()) {
+          const source = figure.dataset.bkMermaidSource?.trim();
+          const stage = figure.querySelector('.bk-mermaid-stage');
+          if (!source || !stage) continue;
+          if (figure.dataset.bkMermaidRenderedTheme === themeKey && figure.dataset.bkMermaidStatus === 'rendered') continue;
+
+          figure.dataset.bkMermaidStatus = 'loading';
+          stage.setAttribute('aria-busy', 'true');
+
+          try {
+            const renderId = `bk-mermaid-${token}-${index}`;
+            const result = await mermaid.render(renderId, source);
+            if (token !== mermaidRenderToken) return;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'bk-mermaid-svg';
+            wrapper.innerHTML = result.svg;
+            stage.replaceChildren(wrapper);
+            result.bindFunctions?.(stage);
+            figure.dataset.bkMermaidRenderedTheme = themeKey;
+            figure.dataset.bkMermaidStatus = 'rendered';
+          } catch (error) {
+            stage.replaceChildren(...createMermaidFallback(source, error));
+            figure.dataset.bkMermaidStatus = 'error';
+          } finally {
+            stage.removeAttribute('aria-busy');
+          }
+        }
+      }
+
+      renderBriefkitMermaid();
+      window.addEventListener('briefkit:theme-change', renderBriefkitMermaid);
+      mermaidMediaQuery.addEventListener('change', () => {
+        if ((document.documentElement.dataset.bkTheme || 'auto') === 'auto') renderBriefkitMermaid();
+      });
     </script>
   </body>
 </html>
