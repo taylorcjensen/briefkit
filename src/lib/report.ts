@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import matter from 'gray-matter';
-import type { BriefkitConfig, HeadingInfo, PageConfigEntry, PageInfo, ReportInfo } from './types.js';
+import type { BriefkitConfig, PageConfigEntry, PageInfo, ReportInfo } from './types.js';
 
 const CONFIG_NAMES = ['briefkit.config.ts', 'briefkit.config.js', 'briefkit.config.mjs'];
 const PAGE_EXTENSIONS = ['.mdx', '.md'];
@@ -114,7 +114,6 @@ async function readPage(reportDir: string, file: string, config?: PageConfigEntr
     hidden: data.hidden === true,
     description,
     image,
-    headings: extractHeadings(parsed.content),
     layout,
     customLayout: stringValue(data.customLayout),
   };
@@ -232,73 +231,12 @@ function normalizeLayout(value: unknown): PageInfo['layout'] {
   return 'report';
 }
 
-function extractHeadings(content: string): HeadingInfo[] {
-  const matches: Array<{ index: number; depth: number; slug?: string; text: string }> = [];
-  const usedSlugs = new Map<string, number>();
-  const markdownHeadingPattern = /^(#{2,4})\s+(.+)$/gm;
-  const htmlHeadingPattern = /<h([2-4])([^>]*)>(.*?)<\/h\1>/gims;
-  let match: RegExpExecArray | null;
-
-  while ((match = markdownHeadingPattern.exec(content)) !== null) {
-    const rawText = match[2].replace(/\s+#+\s*$/, '').trim();
-    const text = stripMdx(rawText);
-    if (!text) continue;
-    matches.push({ index: match.index, depth: match[1].length, text });
-  }
-
-  while ((match = htmlHeadingPattern.exec(content)) !== null) {
-    if (isNonNavigableHeading(match[2])) continue;
-    const text = stripMdx(match[3]);
-    if (!text) continue;
-    matches.push({
-      index: match.index,
-      depth: Number(match[1]),
-      slug: extractId(match[2]),
-      text,
-    });
-  }
-
-  return matches
-    .sort((a, b) => a.index - b.index)
-    .map((heading) => ({
-      depth: heading.depth,
-      slug: uniqueSlug(heading.slug || slugify(heading.text), usedSlugs),
-      text: heading.text,
-    }));
-}
-
-function extractId(attributes: string): string | undefined {
-  const match = /\sid=["']([^"']+)["']/.exec(attributes);
-  return match?.[1];
-}
-
-function isNonNavigableHeading(attributes: string): boolean {
-  return /className=["'][^"']*(bk-callout-title|callout-title)[^"']*["']/.test(attributes)
-    || /data-nav=["']false["']/.test(attributes);
-}
-
 function stripMdx(value: string): string {
   return value
     .replace(/<[^>]+>/g, '')
     .replace(/[{}*_`~\[\]]/g, '')
     .replace(/\([^)]*\)/g, '')
     .trim();
-}
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-') || 'section';
-}
-
-function uniqueSlug(slug: string, usedSlugs: Map<string, number>): string {
-  const count = usedSlugs.get(slug) ?? 0;
-  usedSlugs.set(slug, count + 1);
-  return count === 0 ? slug : `${slug}-${count + 1}`;
 }
 
 function assertUniqueRoutes(pages: PageInfo[]): void {

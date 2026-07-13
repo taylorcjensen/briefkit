@@ -81,6 +81,21 @@ briefkit publish-config set --target https://briefs.example.com --api-key KEY
 
 Build/dev generated Astro workspaces live under the OS temp directory. The report folder only needs to contain your source files and optional build output.
 
+## Requirements and output ownership
+
+Briefkit requires Node.js 22.12 or newer.
+
+Briefkit only replaces a non-empty build output directory when that directory contains Briefkit's ownership marker, `.briefkit-output.json`. This prevents accidental deletion of hand-authored files.
+
+If you have a legacy Briefkit output directory from before ownership markers were written:
+
+1. Confirm the directory is generated output, not source material.
+2. Make a backup or rename it, for example `mv brief brief.backup`.
+3. Run `briefkit build /path/to/report` again. Briefkit will create fresh output and write the marker.
+4. After checking the rebuilt site, delete the backup.
+
+If Briefkit refuses to build because an unmarked directory is non-empty, do not add the marker by hand unless you are certain every file in that directory is disposable generated output. The safest recovery is to move the directory aside and rebuild.
+
 ## Publishing briefs
 
 Briefkit includes a small Docker publish server in `publish-server/`. The CLI builds a report, uploads the generated static files, and the server stores them under `/briefs`.

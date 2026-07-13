@@ -25,10 +25,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.12.0
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build README with Briefkit
         run: npm run briefkit -- build . --out ./dist --color-mode auto

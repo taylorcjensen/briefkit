@@ -1,6 +1,6 @@
 {
   "name": "briefkit",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Static Markdown/MDX report-site toolkit for fast agent-authored briefs.",
   "keywords": [
     "agent",
@@ -36,23 +36,27 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck",
+    "test": "node --import tsx/esm --test \"test/**/*.test.ts\"",
+    "astro:check": "astro check",
+    "check": "npm run typecheck && npm run astro:check && npm test",
     "briefkit": "node --import tsx/esm ./bin/briefkit.js"
   },
   "dependencies": {
-    "@astrojs/mdx": "^4.3.0",
-    "astro": "^5.15.4",
+    "@astrojs/markdown-remark": "^7.2.1",
+    "@astrojs/mdx": "^7.0.2",
+    "astro": "^7.0.7",
     "gray-matter": "^4.0.3",
     "mermaid": "^11.16.0",
     "tsx": "^4.20.5",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.9",
     "@types/node": "^25.9.3",
     "typescript": "^5.9.2"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   },
   "license": "MIT"
 }

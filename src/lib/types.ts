@@ -18,12 +18,6 @@ export interface BriefkitConfig {
   pages?: PageConfig[];
 }
 
-export interface HeadingInfo {
-  depth: number;
-  slug: string;
-  text: string;
-}
-
 export interface PageInfo {
   file: string;
   absolutePath: string;
@@ -32,7 +26,6 @@ export interface PageInfo {
   hidden: boolean;
   description?: string;
   image?: string;
-  headings: HeadingInfo[];
   layout: 'report' | 'none' | 'custom';
   customLayout?: string;
 }

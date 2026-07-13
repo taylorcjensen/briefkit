@@ -9,6 +9,7 @@ const defaultDuration = process.env.BRIEFKIT_DEFAULT_DURATION || process.env.DEF
 const defaultIndexed = parseBoolean(process.env.BRIEFKIT_DEFAULT_INDEXED ?? process.env.DEFAULT_INDEXED ?? 'true');
 const port = Number(process.env.PORT || 8080);
 const maxBodyBytes = Number(process.env.BRIEFKIT_MAX_BODY_BYTES || 50 * 1024 * 1024);
+const internalCleanupStaleMs = Number(process.env.BRIEFKIT_INTERNAL_CLEANUP_STALE_MS || 60 * 60 * 1000);
 
 if (apiKeys.size === 0) {
   console.error('BRIEFKIT_API_KEYS is required. Use a comma-separated list for multiple keys.');
@@ -16,6 +17,7 @@ if (apiKeys.size === 0) {
 }
 
 await fs.mkdir(storageDir, { recursive: true });
+await cleanupInternalStorageEntries();
 await cleanupExpiredBriefs();
 setInterval(() => cleanupExpiredBriefs().catch((error) => console.error(error)), 60 * 60 * 1000).unref();
 
@@ -54,27 +56,100 @@ async function handlePublish(request, response) {
     return;
   }
 
-  const payload = JSON.parse(await readBody(request));
+  const publishRequest = await parsePublishRequest(request);
+  const slug = await publishStagedBrief(publishRequest);
+
+  sendJson(response, 201, { url: `${domain}/${slug}/`, slug, expiresAt: publishRequest.expiresAt });
+}
+
+async function parsePublishRequest(request) {
+  const payload = parseJsonObject(await readBody(request));
   const title = assertString(payload.title, 'title');
   const requestedDuration = payload.duration === undefined || payload.duration === null ? defaultDuration : assertString(payload.duration, 'duration');
   const expiresAt = calculateExpiresAt(requestedDuration);
   const indexed = payload.indexed === undefined || payload.indexed === null ? defaultIndexed : assertBoolean(payload.indexed, 'indexed');
   const files = assertFiles(payload.files);
-  const slug = await reserveSlug(slugify(title));
-  const briefDir = path.join(storageDir, slug);
+  return { title, requestedDuration, expiresAt, indexed, files };
+}
 
-  await fs.mkdir(briefDir, { recursive: true });
-  for (const file of files) {
-    const relativePath = sanitizeRelativePath(file.path);
-    const destination = path.join(briefDir, relativePath);
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.writeFile(destination, Buffer.from(file.contentBase64, 'base64'));
+async function publishStagedBrief(publishRequest) {
+  const stagingDir = await createStagingDir();
+  try {
+    await writeStagedFiles(stagingDir, publishRequest.files);
+    const slug = await exposeStagedBrief(stagingDir, publishRequest);
+    return slug;
+  } catch (error) {
+    await fs.rm(stagingDir, { recursive: true, force: true });
+    throw error;
   }
+}
 
-  const metadata = { title, slug, createdAt: new Date().toISOString(), expiresAt, duration: requestedDuration, indexed };
-  await fs.writeFile(path.join(briefDir, '.briefkit.json'), JSON.stringify(metadata, null, 2));
+async function createStagingDir() {
+  const name = `.briefkit-staging-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const stagingDir = path.join(storageDir, name);
+  await fs.mkdir(stagingDir, { recursive: false, mode: 0o700 });
+  return stagingDir;
+}
 
-  sendJson(response, 201, { url: `${domain}/${slug}/`, slug, expiresAt });
+async function writeStagedFiles(stagingDir, files) {
+  for (const file of files) {
+    const destination = path.join(stagingDir, file.path);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.writeFile(destination, file.content);
+  }
+}
+
+async function exposeStagedBrief(stagingDir, publishRequest) {
+  const baseSlug = slugify(publishRequest.title);
+  let suffix = 1;
+  while (true) {
+    const slug = suffix === 1 ? baseSlug : `${baseSlug}-${suffix}`;
+    const lockDir = path.join(storageDir, `.briefkit-lock-${slug}`);
+    if (!(await tryCreateLock(lockDir))) {
+      suffix += 1;
+      continue;
+    }
+    try {
+      if (await exists(path.join(storageDir, slug))) {
+        suffix += 1;
+        continue;
+      }
+      const metadata = {
+        title: publishRequest.title,
+        slug,
+        createdAt: new Date().toISOString(),
+        expiresAt: publishRequest.expiresAt,
+        duration: publishRequest.requestedDuration,
+        indexed: publishRequest.indexed,
+      };
+      await fs.writeFile(path.join(stagingDir, '.briefkit.json'), JSON.stringify(metadata, null, 2));
+      await fs.rename(stagingDir, path.join(storageDir, slug));
+      return slug;
+    } finally {
+      await removeInternalEntryQuietly(lockDir);
+    }
+  }
+}
+
+async function tryCreateLock(lockDir) {
+  try {
+    await fs.mkdir(lockDir, { recursive: false, mode: 0o700 });
+    return true;
+  } catch (error) {
+    if (error?.code === 'EEXIST') return false;
+    throw error;
+  }
+}
+
+function parseJsonObject(value) {
+  try {
+    const payload = JSON.parse(value);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new HttpError(400, 'Request body must be a JSON object');
+    return payload;
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(400, 'Request body must be valid JSON');
+  }
 }
 
 async function handleDelete(request, response) {
@@ -108,8 +183,12 @@ async function serveStaticFile(request, response) {
     return;
   }
 
-  const pathname = decodeURIComponent(url.pathname);
+  const pathname = safeDecodePathname(url.pathname);
   const relativePath = sanitizeRelativePath(pathname);
+  if (isInternalStoragePath(relativePath)) {
+    sendNotFound(response);
+    return;
+  }
   const candidate = path.join(storageDir, relativePath);
   const filePath = await resolveStaticFile(candidate);
   if (!filePath || await isInsideExpiredBrief(filePath)) {
@@ -117,15 +196,24 @@ async function serveStaticFile(request, response) {
     return;
   }
 
-  const data = request.method === 'HEAD' ? undefined : await readStaticResponseBody(filePath, url);
+  const data = request.method === 'HEAD' ? undefined : await readStaticResponseBodyOrUndefined(filePath, url);
+  if (data === undefined && request.method !== 'HEAD') {
+    sendNotFound(response);
+    return;
+  }
   response.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'public, max-age=60' });
   response.end(data);
 }
 
-async function readStaticResponseBody(filePath, requestUrl) {
-  const data = await fs.readFile(filePath);
-  if (contentType(filePath) !== 'text/html; charset=utf-8') return data;
-  return updatePreviewUrls(data.toString('utf8'), requestUrl);
+async function readStaticResponseBodyOrUndefined(filePath, requestUrl) {
+  try {
+    const data = await fs.readFile(filePath);
+    if (contentType(filePath) !== 'text/html; charset=utf-8') return data;
+    return updatePreviewUrls(data.toString('utf8'), requestUrl);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined;
+    throw error;
+  }
 }
 
 function updatePreviewUrls(html, requestUrl) {
@@ -178,7 +266,7 @@ async function indexedBriefs() {
   const entries = await fs.readdir(storageDir, { withFileTypes: true });
   const briefs = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || isInternalStorageName(entry.name)) continue;
     const metadata = await readMetadata(path.join(storageDir, entry.name));
     if (!metadata || metadata.indexed === false || isExpired(metadata.expiresAt)) continue;
     briefs.push({
@@ -233,6 +321,33 @@ async function isInsideExpiredBrief(filePath) {
   return metadata ? isExpired(metadata.expiresAt) : false;
 }
 
+async function cleanupInternalStorageEntries() {
+  const entries = await fs.readdir(storageDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !isStaleInternalDirectoryName(entry.name)) continue;
+    const entryPath = path.join(storageDir, entry.name);
+    const stat = await statOrUndefined(entryPath);
+    if (!stat || !isStaleInternalEntry(stat)) continue;
+    await removeInternalEntryQuietly(entryPath);
+  }
+}
+
+function isStaleInternalDirectoryName(value) {
+  return value.startsWith('.briefkit-staging-') || value.startsWith('.briefkit-lock-');
+}
+
+function isStaleInternalEntry(stat) {
+  return Date.now() - stat.mtimeMs >= internalCleanupStaleMs;
+}
+
+async function removeInternalEntryQuietly(entryPath) {
+  try {
+    await fs.rm(entryPath, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(`Briefkit publish server warning: could not remove internal entry ${path.basename(entryPath)}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function cleanupExpiredBriefs() {
   const entries = await fs.readdir(storageDir, { withFileTypes: true });
   for (const entry of entries) {
@@ -251,16 +366,6 @@ async function readMetadata(briefDir) {
   } catch {
     return undefined;
   }
-}
-
-async function reserveSlug(baseSlug) {
-  let suffix = 1;
-  let slug = baseSlug;
-  while (await exists(path.join(storageDir, slug))) {
-    suffix += 1;
-    slug = `${baseSlug}-${suffix}`;
-  }
-  return slug;
 }
 
 function calculateExpiresAt(duration) {
@@ -300,14 +405,47 @@ async function readBody(request) {
 
 function assertFiles(value) {
   if (!Array.isArray(value) || value.length === 0) throw new HttpError(400, 'files must be a non-empty array');
-  return value.map((file) => ({
-    path: assertString(file.path, 'file.path'),
-    contentBase64: assertString(file.contentBase64, 'file.contentBase64'),
-  }));
+  const files = value.map((file) => {
+    if (!file || typeof file !== 'object' || Array.isArray(file)) throw new HttpError(400, 'files must contain file objects');
+    const filePath = sanitizeUploadPath(assertString(file.path, 'file.path'));
+    return { path: filePath, content: decodeBase64(assertBase64String(file.contentBase64, 'file.contentBase64')) };
+  });
+  assertUniqueFilePaths(files.map((file) => file.path));
+  return files;
+}
+
+function decodeBase64(value) {
+  if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    throw new HttpError(400, 'file.contentBase64 must be valid base64');
+  }
+  return Buffer.from(value, 'base64');
+}
+
+function assertUniqueFilePaths(filePaths) {
+  const seen = new Set();
+  const directories = new Set();
+  for (const filePath of filePaths) {
+    if (seen.has(filePath)) throw new HttpError(400, `Duplicate file path: ${filePath}`);
+    seen.add(filePath);
+    const parts = filePath.split('/');
+    let current = '';
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      current = current ? `${current}/${parts[index]}` : parts[index];
+      directories.add(current);
+    }
+  }
+  for (const filePath of seen) {
+    if (directories.has(filePath)) throw new HttpError(400, `File path conflicts with directory: ${filePath}`);
+  }
 }
 
 function assertString(value, name) {
   if (typeof value !== 'string' || value.length === 0) throw new HttpError(400, `${name} is required`);
+  return value;
+}
+
+function assertBase64String(value, name) {
+  if (typeof value !== 'string') throw new HttpError(400, `${name} is required`);
   return value;
 }
 
@@ -326,6 +464,30 @@ function sanitizeRelativePath(value) {
   return normalized;
 }
 
+function sanitizeUploadPath(value) {
+  if (value.includes('\\') || value.startsWith('/') || value.endsWith('/') || value.includes('//') || value.includes('\0')) throw new HttpError(400, 'Invalid file path');
+  const normalized = path.posix.normalize(value);
+  if (!normalized || normalized === '.' || normalized.startsWith('../') || normalized === '..') throw new HttpError(400, 'Invalid file path');
+  if (normalized !== value || isInternalStoragePath(normalized)) throw new HttpError(400, 'Invalid file path');
+  return normalized;
+}
+
+function safeDecodePathname(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, 'Invalid path');
+  }
+}
+
+function isInternalStoragePath(value) {
+  return value.split('/').some(isInternalStorageName);
+}
+
+function isInternalStorageName(value) {
+  return value === '.briefkit.json' || value.startsWith('.briefkit-');
+}
+
 async function ensureInsideStorage(value) {
   const resolved = path.resolve(value);
   if (!resolved.startsWith(path.resolve(storageDir) + path.sep) && resolved !== path.resolve(storageDir)) {
@@ -340,7 +502,13 @@ function slugify(value) {
 }
 
 function sanitizeSlug(value) {
-  const slug = decodeURIComponent(value).replace(/^\/+|\/+$/g, '');
+  let decoded;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, 'Invalid brief slug');
+  }
+  const slug = decoded.replace(/^\/+|\/+$/g, '');
   if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) throw new HttpError(400, 'Invalid brief slug');
   return slug;
 }

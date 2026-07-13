@@ -26,10 +26,10 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Check and test
+        run: npm run check
 
       - name: Pack dry run
         run: npm pack --dry-run

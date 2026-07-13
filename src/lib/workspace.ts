@@ -26,42 +26,75 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
   const workspaceDir = workspacePath(report.reportDir, options.port);
   const outDir = path.resolve(options.outDir ?? path.join(report.reportDir, 'brief'));
   await fs.rm(workspaceDir, { recursive: true, force: true });
-  await fs.mkdir(path.join(workspaceDir, 'src', 'pages'), { recursive: true });
-  await fs.mkdir(path.join(workspaceDir, 'src', 'generated'), { recursive: true });
+  await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
 
   await writeJson(path.join(workspaceDir, 'package.json'), {
     type: 'module',
     dependencies: {},
   });
   await linkNodeModules(workspaceDir);
-
-  await writeJson(path.join(workspaceDir, 'src', 'generated', 'report-data.json'), {
-    reportDir: report.reportDir,
-    title: report.title,
-    author: report.config.author,
-    buildTime: new Date().toLocaleString(),
-    colorMode: options.colorMode,
-    pages: report.pages.map((page) => ({
-      file: page.file,
-      route: page.route,
-      title: page.title,
-      description: page.description,
-      image: page.image,
-      headings: page.headings,
-      layout: page.layout,
-      customLayout: page.customLayout,
-    })),
-  });
-  await preparePublicDir(workspaceDir, report.reportDir, await reportUsesMermaid(report.reportDir, report.pages));
-
   await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
-
-  for (const page of report.pages) {
-    await writeProcessedPage(workspaceDir, page, report.title);
-    await writePageWrapper(workspaceDir, page);
-  }
+  await syncWorkspace(workspaceDir, report, options);
 
   return { dir: workspaceDir, outDir };
+}
+
+export async function syncWorkspace(workspaceDir: string, report: ReportInfo, options: WorkspaceOptions): Promise<void> {
+  await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
+  const stagingDir = path.join(workspaceDir, `.briefkit-sync-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  try {
+    await resetGeneratedDir(path.join(stagingDir, 'src', 'generated'));
+    await resetGeneratedDir(path.join(stagingDir, 'src', 'pages'));
+    await resetGeneratedDir(path.join(stagingDir, 'src', 'processed'));
+
+    await writeJson(path.join(stagingDir, 'src', 'generated', 'report-data.json'), {
+      reportDir: report.reportDir,
+      title: report.title,
+      author: report.config.author,
+      buildTime: new Date().toLocaleString(),
+      colorMode: options.colorMode,
+      pages: report.pages.map((page) => ({
+        file: page.file,
+        route: page.route,
+        title: page.title,
+        description: page.description,
+        image: page.image,
+        layout: page.layout,
+        customLayout: page.customLayout,
+      })),
+    });
+    await preparePublicDir(stagingDir, report.reportDir, await reportUsesMermaid(report.reportDir, report.pages));
+
+    for (const page of report.pages) {
+      await writeProcessedPage(stagingDir, page, report.title);
+      await writePageWrapper(stagingDir, workspaceDir, page);
+    }
+
+    await promoteGeneratedWorkspace(stagingDir, workspaceDir);
+  } catch (error) {
+    await fs.rm(stagingDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+
+async function promoteGeneratedWorkspace(stagingDir: string, workspaceDir: string): Promise<void> {
+  const generatedDirs = [
+    [path.join(stagingDir, 'src', 'generated'), path.join(workspaceDir, 'src', 'generated')],
+    [path.join(stagingDir, 'src', 'pages'), path.join(workspaceDir, 'src', 'pages')],
+    [path.join(stagingDir, 'src', 'processed'), path.join(workspaceDir, 'src', 'processed')],
+    [path.join(stagingDir, 'public'), path.join(workspaceDir, 'public')],
+  ];
+
+  for (const [_source, destination] of generatedDirs) {
+    await fs.rm(destination, { recursive: true, force: true });
+  }
+  for (const [source, destination] of generatedDirs) {
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.rename(source, destination);
+  }
+  await fs.rm(stagingDir, { recursive: true, force: true });
 }
 
 function workspacePath(reportDir: string, port?: number): string {
@@ -106,9 +139,14 @@ function isComponentSourceFile(fileName: string): boolean {
 
 async function preparePublicDir(workspaceDir: string, reportDir: string, includeMermaidAssets: boolean): Promise<void> {
   const publicDir = path.join(workspaceDir, 'public');
-  await fs.mkdir(publicDir, { recursive: true });
+  await resetGeneratedDir(publicDir);
   await copyDirIfExists(path.join(reportDir, 'public'), publicDir);
   if (includeMermaidAssets) await copyMermaidAssets(publicDir);
+}
+
+async function resetGeneratedDir(dir: string): Promise<void> {
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
 }
 
 async function copyMermaidAssets(publicDir: string): Promise<void> {
@@ -159,6 +197,7 @@ function astroConfig(reportDir: string, outDir: string, workspaceDir: string, si
   const cacheDir = path.join(workspaceDir, '.astro');
   return `import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
+import { unified } from '@astrojs/markdown-remark';
 import path from 'node:path';
 import YAML from 'yaml';
 import briefkitTables from ${JSON.stringify(path.join(packageRootPath, 'src', 'lib', 'rehypeTables.ts'))};
@@ -181,7 +220,7 @@ export default defineConfig({
   publicDir: ${JSON.stringify(publicDir)},
   cacheDir: ${JSON.stringify(cacheDir)},
   devToolbar: { enabled: false },
-  markdown: { rehypePlugins: [briefkitTables, briefkitMermaid] },
+  markdown: { processor: unified({ rehypePlugins: [briefkitTables, briefkitMermaid] }) },
   integrations: [mdx()],
   vite: {
     plugins: [yamlPlugin()],
@@ -201,10 +240,10 @@ export default defineConfig({
 `;
 }
 
-async function writePageWrapper(workspaceDir: string, page: PageInfo): Promise<void> {
-  const routeFile = routeToWrapperPath(workspaceDir, page.route);
+async function writePageWrapper(targetWorkspaceDir: string, importWorkspaceDir: string, page: PageInfo): Promise<void> {
+  const routeFile = routeToWrapperPath(targetWorkspaceDir, page.route);
   await fs.mkdir(path.dirname(routeFile), { recursive: true });
-  await fs.writeFile(routeFile, pageWrapperSource(workspaceDir, page), 'utf8');
+  await fs.writeFile(routeFile, pageWrapperSource(importWorkspaceDir, page), 'utf8');
 }
 
 function routeToWrapperPath(workspaceDir: string, route: string): string {
@@ -218,8 +257,8 @@ async function writeProcessedPage(workspaceDir: string, page: PageInfo, reportTi
   const parsed = matter(source);
   warnIfReportPageStartsWithH1(page, parsed.content);
   const contentWithoutDuplicateTitle = removeDuplicateTitleHeading(parsed.content, [page.title, reportTitle]);
-  const normalizedContent = normalizeSlashSpacingInMdx(injectHtmlTableColgroups(contentWithoutDuplicateTitle));
-  const processed = matter.stringify(normalizedContent, parsed.data);
+  const normalizedContent = injectHtmlTableColgroups(contentWithoutDuplicateTitle);
+  const processed = `${matter.stringify(normalizedContent, parsed.data).trimEnd()}\n\nexport const briefkitHeadingOrder = ${JSON.stringify(extractHeadingOrder(normalizedContent))};\n`;
   const targetPath = processedPagePath(page, workspaceDir);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, processed, 'utf8');
@@ -273,28 +312,63 @@ function stripHeadingText(value: string): string {
   return value.replace(/\s+#+\s*$/, '').replace(/[{}*_`~\[\]]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function normalizeSlashSpacingInMdx(content: string): string {
-  let inFence = false;
+function extractHeadingOrder(content: string): Array<{ type: 'markdown' } | { type: 'html'; depth: number; slug: string; text: string }> {
+  const visibleContent = maskFencedCodeBlocks(content);
+  const entries: Array<{ index: number; type: 'markdown' } | { index: number; type: 'html'; depth: number; slug: string; text: string }> = [];
+  const markdownHeadingPattern = /^ {0,3}(#{2,4})[ \t]+(.+)$/gm;
+  const htmlHeadingPattern = /<h([2-4])([^>]*)>(.*?)<\/h\1>/gims;
+  let match: RegExpExecArray | null;
+
+  while ((match = markdownHeadingPattern.exec(visibleContent)) !== null) {
+    entries.push({ index: match.index, type: 'markdown' });
+  }
+
+  while ((match = htmlHeadingPattern.exec(visibleContent)) !== null) {
+    const slug = extractHeadingId(match[2]);
+    const text = stripHeadingText(match[3].replace(/<[^>]+>/g, ''));
+    if (slug && text && !isNonNavigableHeading(match[2])) {
+      entries.push({ index: match.index, type: 'html', depth: Number(match[1]), slug, text });
+    }
+  }
+
+  return entries.sort((left, right) => left.index - right.index).map(({ index: _index, ...entry }) => entry);
+}
+
+function extractHeadingId(attributes: string): string | undefined {
+  return /\bid=["']([^"']+)["']/.exec(attributes)?.[1];
+}
+
+function isNonNavigableHeading(attributes: string): boolean {
+  return /className=["'][^"']*(bk-callout-title|callout-title)[^"']*["']/.test(attributes)
+    || /data-nav=["']false["']/.test(attributes);
+}
+
+function maskFencedCodeBlocks(content: string): string {
+  let openFence: { character: '`' | '~'; length: number } | undefined;
+
   return content.split('\n').map((line) => {
-    if (/^\s*```/.test(line)) inFence = !inFence;
-    if (inFence || /^\s*(import|export)\s/.test(line)) return line;
-    return line.split(/(<[^>]+>)/g).map((part) => {
-      if (part.startsWith('<') && part.endsWith('>')) return part;
-      return normalizeSlashSpacingText(part);
-    }).join('');
+    const fence = fenceMarker(line);
+    if (!openFence && fence) {
+      openFence = fence;
+      return ' '.repeat(line.length);
+    }
+    if (!openFence) return line;
+
+    if (fence?.character === openFence.character && fence.length >= openFence.length && fence.isClosing) {
+      openFence = undefined;
+    }
+    return ' '.repeat(line.length);
   }).join('\n');
 }
 
-function normalizeSlashSpacingText(value: string): string {
-  const preserved: string[] = [];
-  return value
-    .replace(/(`[^`]*`|\[[^\]]*\]\([^)]+\))/g, (match) => {
-      preserved.push(match);
-      return `\u0000${preserved.length - 1}\u0000`;
-    })
-    .replace(/(?<=[A-Za-z0-9)])\/(?=[A-Za-z0-9(])/g, ' / ')
-    .replace(/\s+\/\s+/g, ' / ')
-    .replace(/\u0000(\d+)\u0000/g, (_match, index: string) => preserved[Number(index)] ?? '');
+function fenceMarker(line: string): { character: '`' | '~'; length: number; isClosing: boolean } | undefined {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match) return undefined;
+  return {
+    character: match[1][0] as '`' | '~',
+    length: match[1].length,
+    isClosing: match[2].trim().length === 0,
+  };
 }
 
 function injectHtmlTableColgroups(content: string): string {
@@ -351,9 +425,20 @@ import Content from ${JSON.stringify(pagePath)};
     }
     return `---
 import CustomLayout from ${JSON.stringify(customLayout)};
-import Content from ${JSON.stringify(pagePath)};
+import Content, { briefkitHeadingOrder, getHeadings } from ${JSON.stringify(pagePath)};
 import reportData from ${JSON.stringify(relativeGeneratedImport(page.route, 'report-data.json'))};
-const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
+const currentPageData = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
+if (!currentPageData) throw new Error('Briefkit could not find current page data for ${pageKey}.');
+const currentPage = { ...currentPageData, headings: currentPageHeadings() };
+function currentPageHeadings() {
+  const compilerHeadings = getHeadings().filter((heading) => heading.depth >= 2 && heading.depth <= 4);
+  const nextCompilerHeading = compilerHeadings[Symbol.iterator]();
+  return briefkitHeadingOrder.flatMap((entry) => {
+    if (entry.type === 'html') return [{ depth: entry.depth, slug: entry.slug, text: entry.text }];
+    const next = nextCompilerHeading.next();
+    return next.done ? [] : [next.value];
+  });
+}
 ---
 <CustomLayout page={currentPage} report={reportData}>
   <Content />
@@ -363,10 +448,21 @@ const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringi
 
   return `---
 import { ReportLayout } from 'briefkit';
-import Content from ${JSON.stringify(pagePath)};
+import Content, { briefkitHeadingOrder, getHeadings } from ${JSON.stringify(pagePath)};
 import reportData from ${JSON.stringify(relativeGeneratedImport(page.route, 'report-data.json'))};
-const currentPage = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
+const currentPageData = reportData.pages.find((page) => page.file === ${JSON.stringify(pageKey)});
+if (!currentPageData) throw new Error('Briefkit could not find current page data for ${pageKey}.');
+const currentPage = { ...currentPageData, headings: currentPageHeadings() };
 const navPages = reportData.pages.map((page) => ({ title: page.title, route: relativePageHref(currentPage.route, page.route), current: page.file === ${JSON.stringify(pageKey)} }));
+function currentPageHeadings() {
+  const compilerHeadings = getHeadings().filter((heading) => heading.depth >= 2 && heading.depth <= 4);
+  const nextCompilerHeading = compilerHeadings[Symbol.iterator]();
+  return briefkitHeadingOrder.flatMap((entry) => {
+    if (entry.type === 'html') return [{ depth: entry.depth, slug: entry.slug, text: entry.text }];
+    const next = nextCompilerHeading.next();
+    return next.done ? [] : [next.value];
+  });
+}
 function relativePageHref(fromRoute, toRoute) {
   if (fromRoute === toRoute) return './';
   const edgeSlashes = new RegExp('^/+|/+$', 'g');

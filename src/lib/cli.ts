@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { build, dev } from 'astro';
 import { loadReport } from './report.js';
-import { createWorkspace } from './workspace.js';
+import { assertCanPrepareOutputDirectory, isOutputOwnershipMarker, writeOutputOwnershipMarker } from './outputPolicy.js';
+import { createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
 import type { ColorMode } from './types.js';
 
 interface ParsedArgs {
@@ -61,47 +62,63 @@ export async function runCli(argv: string[]): Promise<void> {
   if (args.command === 'publish' && !publishApiKey) throw new Error('Publish API key is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
   const shouldCleanPublishOutDir = args.command === 'publish' && !args.outDir;
   const outDir = shouldCleanPublishOutDir ? await fs.mkdtemp(path.join(os.tmpdir(), 'briefkit-publish-')) : args.outDir;
-  const workspace = await createWorkspace(report, {
+  const workspaceOptions: WorkspaceOptions = {
     mode: args.command === 'dev' ? 'dev' : 'build',
     colorMode: args.colorMode,
     outDir,
     port: args.port,
     site: publishTarget,
-  });
+  };
 
-  if (args.command === 'dev') {
-    const server = await runInWorkspace(workspace.dir, () => dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } }));
-    const address = server.address;
-    const url = typeof address === 'object' && address ? `http://localhost:${address.port}` : 'http://localhost';
-    if (args.open) openBrowserWithoutFocus(url);
-    console.log('Briefkit dev server running');
+  try {
+    const workspace = await createWorkspace(report, workspaceOptions);
+
+    if (args.command === 'dev') {
+      const server = await runInWorkspace(workspace.dir, () => dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } }));
+      attachDevWorkspaceSync(server, workspace.dir, report.reportDir, workspaceOptions);
+      const address = server.address;
+      const url = typeof address === 'object' && address ? `http://localhost:${address.port}` : 'http://localhost';
+      if (args.open) openBrowserWithoutFocus(url);
+      console.log('Briefkit dev server running');
+      console.log(`Report: ${report.reportDir}`);
+      console.log(`URL: ${url}`);
+      if (args.open) console.log('Opened browser window in background.');
+      return;
+    }
+
+    await assertCanPrepareOutputDirectory(workspace.outDir, report.reportDir);
+    await fs.rm(workspace.outDir, { recursive: true, force: true });
+    await runInWorkspace(workspace.dir, () => build({ root: workspace.dir }));
+    await ensurePublicFallback(report.reportDir, workspace.outDir);
+    await writeOutputOwnershipMarker(workspace.outDir);
+
+    if (args.command === 'publish') {
+      const target = publishTarget!;
+      const apiKey = publishApiKey!;
+      const files = await collectPublishFiles(workspace.outDir);
+      const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, indexed: args.indexed, files });
+      console.log('Briefkit publish complete');
+      console.log(`Report: ${report.reportDir}`);
+      console.log(`URL: ${result.url}`);
+      if (result.expiresAt) console.log(`Expires: ${result.expiresAt}`);
+      if (result.expiresAt === null) console.log('Expires: never');
+      return;
+    }
+
+    console.log('Briefkit build complete');
     console.log(`Report: ${report.reportDir}`);
-    console.log(`URL: ${url}`);
-    if (args.open) console.log('Opened browser window in background.');
-    return;
+    console.log(`Output: ${workspace.outDir}`);
+  } finally {
+    if (shouldCleanPublishOutDir && outDir) await cleanupTemporaryPublishOutput(outDir);
   }
+}
 
-  await fs.rm(workspace.outDir, { recursive: true, force: true });
-  await runInWorkspace(workspace.dir, () => build({ root: workspace.dir }));
-  await ensurePublicFallback(report.reportDir, workspace.outDir);
-
-  if (args.command === 'publish') {
-    const target = publishTarget!;
-    const apiKey = publishApiKey!;
-    const files = await collectPublishFiles(workspace.outDir);
-    const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, indexed: args.indexed, files });
-    console.log('Briefkit publish complete');
-    console.log(`Report: ${report.reportDir}`);
-    console.log(`URL: ${result.url}`);
-    if (result.expiresAt) console.log(`Expires: ${result.expiresAt}`);
-    if (result.expiresAt === null) console.log('Expires: never');
-    if (shouldCleanPublishOutDir) await fs.rm(workspace.outDir, { recursive: true, force: true });
-    return;
+export async function cleanupTemporaryPublishOutput(outDir: string): Promise<void> {
+  try {
+    await fs.rm(outDir, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(`Briefkit warning: could not remove temporary publish output ${outDir}: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  console.log('Briefkit build complete');
-  console.log(`Report: ${report.reportDir}`);
-  console.log(`Output: ${workspace.outDir}`);
 }
 
 async function runInWorkspace<T>(workspaceDir: string, action: () => Promise<T>): Promise<T> {
@@ -112,6 +129,40 @@ async function runInWorkspace<T>(workspaceDir: string, action: () => Promise<T>)
   } finally {
     process.chdir(originalCwd);
   }
+}
+
+function attachDevWorkspaceSync(server: Awaited<ReturnType<typeof dev>>, workspaceDir: string, reportDir: string, options: WorkspaceOptions): void {
+  server.watcher.add(reportDir);
+
+  let debounceTimer: NodeJS.Timeout | undefined;
+  let syncQueue = Promise.resolve();
+  const scheduleSync = (eventName: string, changedPath: string) => {
+    if (!isReportSourcePath(reportDir, changedPath, path.resolve(options.outDir ?? path.join(reportDir, 'brief')))) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      syncQueue = syncQueue.then(async () => {
+        try {
+          const nextReport = await loadReport(reportDir);
+          await syncWorkspace(workspaceDir, nextReport, options);
+        } catch (error) {
+          console.warn(`Briefkit warning: keeping last good dev workspace after ${eventName} for ${path.relative(reportDir, changedPath) || changedPath}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
+    }, 100);
+  };
+
+  server.watcher.on('all', scheduleSync);
+}
+
+function isReportSourcePath(reportDir: string, changedPath: string, outDir: string): boolean {
+  const resolvedChangedPath = path.resolve(changedPath);
+  const relativePath = path.relative(reportDir, resolvedChangedPath);
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return false;
+  const relativeOutPath = path.relative(outDir, resolvedChangedPath);
+  if (!relativeOutPath || (!relativeOutPath.startsWith('..') && !path.isAbsolute(relativeOutPath))) return false;
+  const parts = relativePath.split(path.sep);
+  if (parts.some((part) => part === 'node_modules' || part === '.git')) return false;
+  return true;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -275,8 +326,10 @@ async function collectPublishFilesFromDir(rootDir: string, currentDir: string, f
       continue;
     }
     if (!entry.isFile()) continue;
+    const relativeFilePath = path.relative(rootDir, sourcePath);
+    if (isOutputOwnershipMarker(relativeFilePath)) continue;
     files.push({
-      path: path.relative(rootDir, sourcePath).split(path.sep).join('/'),
+      path: relativeFilePath.split(path.sep).join('/'),
       contentBase64: (await fs.readFile(sourcePath)).toString('base64'),
     });
   }
