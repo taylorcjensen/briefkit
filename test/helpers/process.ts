@@ -24,11 +24,11 @@ export async function makeBasicReport(parentDir: string): Promise<string> {
   return reportDir;
 }
 
-export async function runBriefkit(args: string[], options: { cwd?: string } = {}): Promise<ProcessResult> {
+export async function runBriefkit(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<ProcessResult> {
   try {
     const result = await execFileAsync(process.execPath, ['--import', 'tsx/esm', path.join(packageRoot, 'bin', 'briefkit.js'), ...args], {
       cwd: options.cwd ?? packageRoot,
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...process.env, ...options.env, NO_COLOR: '1' },
       maxBuffer: 1024 * 1024 * 10,
     });
     return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };

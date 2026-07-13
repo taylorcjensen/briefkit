@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { makeBasicReport, makeTempDir, runBriefkit } from './helpers/process.ts';
@@ -173,7 +172,8 @@ test('CLI removes temporary publish output after failed server publish', async (
   await new Promise<void>((resolve) => failingServer.listen(0, '127.0.0.1', resolve));
   const address = failingServer.address();
   assert(address && typeof address === 'object');
-  const before = await publishTempDirs();
+  const publishTempRoot = path.join(tempDir, 'publish-output');
+  await fs.mkdir(publishTempRoot);
 
   try {
     const result = await runBriefkit([
@@ -184,11 +184,15 @@ test('CLI removes temporary publish output after failed server publish', async (
       '--api-key',
       apiKey,
       '--no-indexed',
-    ]);
+    ], {
+      env: { TMPDIR: publishTempRoot, TMP: publishTempRoot, TEMP: publishTempRoot },
+    });
 
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr, /forced failure/);
-    assert.deepEqual(await publishTempDirs(), before);
+    const remainingPublishOutputs = (await fs.readdir(publishTempRoot))
+      .filter((entry) => entry.startsWith('briefkit-publish-'));
+    assert.deepEqual(remainingPublishOutputs, []);
   } finally {
     failingServer.close();
   }
@@ -286,9 +290,4 @@ function textFile(filePath: string, content: string): { path: string; contentBas
 async function publicStorageEntries(storageDir: string): Promise<string[]> {
   const entries = await fs.readdir(storageDir);
   return entries.filter((entry) => !entry.startsWith('.briefkit-')).sort();
-}
-
-async function publishTempDirs(): Promise<string[]> {
-  const entries = await fs.readdir(os.tmpdir());
-  return entries.filter((entry) => entry.startsWith('briefkit-publish-')).sort();
 }
