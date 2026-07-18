@@ -504,14 +504,44 @@ function relativeGeneratedImport(route: string, fileName: string): string {
   return `${'../'.repeat(depth + 1)}generated/${fileName}`;
 }
 
+const WORKSPACE_DEPENDENCIES = ['astro', '@astrojs/mdx', '@astrojs/markdown-remark', 'yaml'] as const;
+
 async function linkNodeModules(workspaceDir: string): Promise<void> {
-  const source = path.join(packageRoot(), 'node_modules');
-  const target = path.join(workspaceDir, 'node_modules');
+  await Promise.all(WORKSPACE_DEPENDENCIES.map((packageName) => linkWorkspaceDependency(workspaceDir, packageName)));
+}
+
+async function linkWorkspaceDependency(workspaceDir: string, packageName: string): Promise<void> {
+  const source = dependencyPackageDir(packageName);
+  const target = path.join(workspaceDir, 'node_modules', ...packageName.split('/'));
+  await fs.mkdir(path.dirname(target), { recursive: true });
   try {
-    await fs.symlink(source, target, 'dir');
+    await fs.symlink(source, target, directoryLinkType());
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
+}
+
+function dependencyPackageDir(packageName: string): string {
+  return packageRootFromResolvedEntry(packageName, require.resolve(packageName));
+}
+
+function packageRootFromResolvedEntry(packageName: string, resolvedEntry: string): string {
+  let currentDir = path.dirname(resolvedEntry);
+  while (currentDir !== path.dirname(currentDir)) {
+    const manifestPath = path.join(currentDir, 'package.json');
+    try {
+      const manifest = require(manifestPath) as { name?: string };
+      if (manifest.name === packageName) return currentDir;
+    } catch {
+      // Keep walking until the package manifest is found.
+    }
+    currentDir = path.dirname(currentDir);
+  }
+  throw new Error(`Briefkit could not locate installed package root for ${packageName}.`);
+}
+
+function directoryLinkType(): 'dir' | 'junction' {
+  return process.platform === 'win32' ? 'junction' : 'dir';
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {

@@ -31,6 +31,9 @@ jobs:
       - name: Check and test
         run: npm run check
 
+      - name: Packed install smoke
+        run: npm run test:packaged-install
+
       - name: Pack dry run
         run: npm pack --dry-run
 

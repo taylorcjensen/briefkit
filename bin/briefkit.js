@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 if (process.env.BRIEFKIT_TSX_RUN !== '1') {
-  const result = spawnSync(process.execPath, ['--import', 'tsx/esm', import.meta.filename, ...process.argv.slice(2)], {
+  const result = spawnSync(process.execPath, ['--import', require.resolve('tsx/esm'), import.meta.filename, ...process.argv.slice(2)], {
     stdio: 'inherit',
     env: { ...process.env, BRIEFKIT_TSX_RUN: '1' },
   });

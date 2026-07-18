@@ -37,6 +37,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx/esm --test \"test/**/*.test.ts\"",
+    "test:packaged-install": "node --import tsx/esm --test test/packagedInstall.smoke.ts",
     "astro:check": "astro check",
     "check": "npm run typecheck && npm run astro:check && npm test",
     "briefkit": "node --import tsx/esm ./bin/briefkit.js"

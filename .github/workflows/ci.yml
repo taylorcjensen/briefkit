@@ -28,6 +28,9 @@ jobs:
       - name: Check and test
         run: npm run check
 
+      - name: Packed install smoke
+        run: npm run test:packaged-install
+
       - name: Production audit
         run: npm audit --omit=dev --audit-level=high
 
