@@ -372,7 +372,7 @@ Rules:
 - `hidden: true` frontmatter keeps a page out of render/nav.
 - `layout: none` renders page content without the Briefkit shell.
 - `layout: custom` with `customLayout` lets a page use a local layout.
-- Files in `public/` are copied to the static output and can be linked from `/file-name.ext`.
+- Files in `public/` are copied to the static output. Link them with a single leading slash from the report root, such as `/chart.png` or `/docs/file.pdf`; Briefkit rewrites those references after build/publish so the report still works when hosted under a subpath like `/my-report/`.
 
 ## Components
 

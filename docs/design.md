@@ -165,13 +165,15 @@ my-report/
     appendix.pdf
 ```
 
-MDX references:
+MDX references use a single leading slash for report-root public assets:
 
 ```mdx
 ![Chart](/chart.png)
 
 <a href="/appendix.pdf">Download appendix</a>
 ```
+
+Build and publish output rewrites those report-root references to file-relative URLs so the same report works at the domain root or under a published slug such as `/vendor-brief/`.
 
 Advanced bundled assets may be considered later, but are not required for the initial design.
 

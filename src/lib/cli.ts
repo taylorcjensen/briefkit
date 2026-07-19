@@ -6,6 +6,7 @@ import { build, dev } from 'astro';
 import { loadReport } from './report.js';
 import { assertCanPrepareOutputDirectory, isOutputOwnershipMarker, writeOutputOwnershipMarker } from './outputPolicy.js';
 import { createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
+import { normalizePortableAssetUrls } from './portableAssetUrls.js';
 import type { ColorMode } from './types.js';
 
 interface ParsedArgs {
@@ -90,6 +91,7 @@ export async function runCli(argv: string[]): Promise<void> {
     await fs.rm(workspace.outDir, { recursive: true, force: true });
     await runInWorkspace(workspace.dir, () => build({ root: workspace.dir }));
     await ensurePublicFallback(report.reportDir, workspace.outDir);
+    await normalizePortableAssetUrls(workspace.outDir);
     await writeOutputOwnershipMarker(workspace.outDir);
 
     if (args.command === 'publish') {

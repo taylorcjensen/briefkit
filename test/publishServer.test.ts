@@ -162,6 +162,44 @@ test('DELETE rejects malformed percent-encoded slugs with 400', async () => {
   }
 });
 
+test('build and publish make report-root public asset URLs portable under a slug', async () => {
+  const tempDir = await makeTempDir('portable-assets');
+  const reportDir = await makePortableAssetReport(tempDir);
+  const outDir = path.join(tempDir, 'brief');
+  const buildResult = await runBriefkit(['build', reportDir, '--out', outDir, '--color-mode', 'auto']);
+
+  assert.equal(buildResult.exitCode, 0, buildResult.stderr);
+  const rootHtml = await fs.readFile(path.join(outDir, 'index.html'), 'utf8');
+  const nestedHtml = await fs.readFile(path.join(outDir, 'nested', 'index.html'), 'utf8');
+  const css = await fs.readFile(path.join(outDir, 'assets', 'site.css'), 'utf8');
+  assertPortableRootHtml(rootHtml, './');
+  assertPortableRootHtml(nestedHtml, '../');
+  assert.match(css, /url\(\.\.\/images\/from-css\.png\)/);
+
+  const server = await startPublishServer('portable-assets');
+  try {
+    const publishResult = await runBriefkit([
+      'publish',
+      reportDir,
+      '--out',
+      outDir,
+      '--target',
+      server.origin,
+      '--api-key',
+      apiKey,
+      '--no-indexed',
+    ]);
+
+    assert.equal(publishResult.exitCode, 0, publishResult.stderr);
+    const slug = 'portable-assets-report';
+    assert.equal((await fetch(`${server.origin}/images/hero.png`)).status, 404);
+    await assertPublishedPortablePageAssets(server.origin, `/${slug}/`);
+    await assertPublishedPortablePageAssets(server.origin, `/${slug}/nested/`);
+  } finally {
+    await server.stop();
+  }
+});
+
 test('CLI removes temporary publish output after failed server publish', async () => {
   const tempDir = await makeTempDir('cli-publish-failure');
   const reportDir = await makeBasicReport(tempDir);
@@ -197,6 +235,95 @@ test('CLI removes temporary publish output after failed server publish', async (
     failingServer.close();
   }
 });
+
+async function makePortableAssetReport(parentDir: string): Promise<string> {
+  const reportDir = path.join(parentDir, 'portable-assets-report');
+  await fs.mkdir(path.join(reportDir, 'pages'), { recursive: true });
+  await fs.mkdir(path.join(reportDir, 'public', 'images'), { recursive: true });
+  await fs.mkdir(path.join(reportDir, 'public', 'docs'), { recursive: true });
+  await fs.mkdir(path.join(reportDir, 'public', 'assets'), { recursive: true });
+  await fs.writeFile(path.join(reportDir, 'briefkit.config.js'), "export default { title: 'Portable Assets Report' };\n", 'utf8');
+  await fs.writeFile(path.join(reportDir, 'index.mdx'), portableAssetPage('Root'), 'utf8');
+  await fs.writeFile(path.join(reportDir, 'pages', 'nested.mdx'), portableAssetPage('Nested'), 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'images', 'hero.png'), 'hero', 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'images', 'hero-2x.png'), 'hero 2x', 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'images', 'inline.png'), 'inline', 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'images', 'from-style.png'), 'style', 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'images', 'from-css.png'), 'css', 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'docs', 'file.pdf'), '%PDF test', 'utf8');
+  await fs.writeFile(path.join(reportDir, 'public', 'assets', 'site.css'), '.asset-fixture{background:url(/images/from-css.png)}\n', 'utf8');
+  return reportDir;
+}
+
+function portableAssetPage(title: string): string {
+  return `---\ntitle: ${title}\n---\n\n<link rel="stylesheet" href="/assets/site.css" />\n<style>{".style-fixture{background:url('/images/from-style.png')}"}</style>\n<img src="/images/hero.png" srcSet="/images/hero.png 1x, /images/hero-2x.png 2x" style={{ backgroundImage: 'url(/images/inline.png)' }} alt="Hero" />\n<a href="/docs/file.pdf" download>Download PDF</a>\n`;
+}
+
+function assertPortableRootHtml(html: string, prefix: string): void {
+  assert.match(html, new RegExp(`src="${escapeRegExp(prefix)}images/hero\\.png"`));
+  assert.match(html, new RegExp(`href="${escapeRegExp(prefix)}docs/file\\.pdf"`));
+  assert.match(html, new RegExp(`href="${escapeRegExp(prefix)}assets/site\\.css"`));
+  assert.match(html, new RegExp(`srcset="${escapeRegExp(prefix)}images/hero\\.png 1x, ${escapeRegExp(prefix)}images/hero-2x\\.png 2x"`));
+  assert.match(html, new RegExp(`url\\(${escapeRegExp(prefix)}images/inline\\.png\\)`));
+  assert.match(html, new RegExp(`url\\('${escapeRegExp(prefix)}images/from-style\\.png'\\)`));
+}
+
+async function assertPublishedPortablePageAssets(origin: string, pagePath: string): Promise<void> {
+  const pageUrl = `${origin}${pagePath}`;
+  const html = await (await fetch(pageUrl)).text();
+
+  await assertResolvedAssetStatus(pageUrl, requiredAttribute(html, 'img', 'src'), 200);
+  await assertResolvedAssetStatus(pageUrl, requiredAttribute(html, 'a', 'href'), 200);
+  for (const srcsetUrl of requiredAttribute(html, 'img', 'srcset').split(',').map((candidate) => candidate.trim().split(/\s+/)[0])) {
+    await assertResolvedAssetStatus(pageUrl, srcsetUrl, 200);
+  }
+
+  const stylesheetPath = requiredStylesheetHref(html);
+  const stylesheetUrl = new URL(stylesheetPath, pageUrl).href;
+  const stylesheetResponse = await fetch(stylesheetUrl);
+  assert.equal(stylesheetResponse.status, 200, stylesheetUrl);
+  const stylesheet = await stylesheetResponse.text();
+  await assertResolvedAssetStatus(stylesheetUrl, requiredCssUrl(stylesheet), 200);
+
+  await assertResolvedAssetStatus(pageUrl, requiredCssUrl(requiredAttribute(html, 'img', 'style')), 200);
+  await assertResolvedAssetStatus(pageUrl, requiredCssUrl(requiredStyleElementContentWithUrl(html)), 200);
+}
+
+async function assertResolvedAssetStatus(baseUrl: string, assetPath: string, expectedStatus: number): Promise<void> {
+  const assetUrl = new URL(assetPath, baseUrl).href;
+  const response = await fetch(assetUrl);
+  assert.equal(response.status, expectedStatus, `${baseUrl} resolved ${assetPath} to ${assetUrl}`);
+}
+
+function requiredAttribute(html: string, tagName: string, attributeName: string): string {
+  const value = html.match(new RegExp(`<${tagName}[^>]*${attributeName}="([^"]+)"`, 'i'))?.[1];
+  assert(value, `${tagName}[${attributeName}] missing`);
+  return value;
+}
+
+function requiredStylesheetHref(html: string): string {
+  const value = html.match(/<link(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+)"/i)?.[1];
+  assert(value, 'link[rel=stylesheet][href] missing');
+  return value;
+}
+
+function requiredStyleElementContentWithUrl(html: string): string {
+  const value = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
+    .map((match) => match[1])
+    .find((content) => /url\(/.test(content));
+  assert(value, '<style> content with url(...) missing');
+  return value;
+}
+
+function requiredCssUrl(css: string): string {
+  const value = css.match(/url\((?:"([^"]+)"|'([^']+)'|([^)]*))\)/)?.slice(1).find((candidate) => candidate !== undefined)?.trim();
+  assert(value, `CSS url(...) missing in ${css}`);
+  return value;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 async function startPublishServer(name: string, providedStorageDir?: string, env: Record<string, string> = {}): Promise<PublishServer> {
   const storageDir = providedStorageDir ?? await makeTempDir(`server-storage-${name}`);
