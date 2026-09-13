@@ -19,7 +19,7 @@ test('packed npm prefix install can build a report from the installed CLI', { ti
   await fs.mkdir(projectDir, { recursive: true });
 
   const packedPackage = await packCurrentPackage(packDir);
-  await runNpm(['install', '--global', '--prefix', prefixDir, '--offline', '--min-release-age=0', packedPackage], tempDir);
+  await runNpm(['install', '--global', '--prefix', prefixDir, '--prefer-offline', '--min-release-age=0', packedPackage], tempDir);
 
   const help = await runInstalledBriefkit(prefixDir, ['--help'], projectDir);
   assert.match(help.stdout, /briefkit build/);
