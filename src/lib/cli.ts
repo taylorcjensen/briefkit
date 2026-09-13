@@ -343,6 +343,7 @@ function attachDevWorkspaceSync(server: Awaited<ReturnType<typeof dev>>, workspa
         try {
           const nextReport = await loadReport(reportDir);
           await syncWorkspace(workspaceDir, nextReport, options);
+          server.watcher.emit('change', path.join(workspaceDir, 'src', 'generated', 'report-data.json'));
         } catch (error) {
           console.warn(`Briefkit warning: keeping last good dev workspace after ${eventName} for ${path.relative(reportDir, changedPath) || changedPath}: ${error instanceof Error ? error.message : String(error)}`);
         }
