@@ -1,0 +1,332 @@
+---
+export interface ResponseOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+interface BaseQuestion {
+  id: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface CheckboxQuestion extends BaseQuestion {
+  type: 'checkbox';
+  default?: boolean;
+}
+
+export interface CheckboxesQuestion extends BaseQuestion {
+  type: 'checkboxes';
+  options: ResponseOption[];
+  default?: string[];
+}
+
+export interface RadioQuestion extends BaseQuestion {
+  type: 'radio';
+  options: ResponseOption[];
+  default?: string;
+}
+
+export interface SelectQuestion extends BaseQuestion {
+  type: 'select';
+  options: ResponseOption[];
+  default?: string;
+  placeholder?: string;
+}
+
+export interface TextQuestion extends BaseQuestion {
+  type: 'text';
+  default?: string;
+  placeholder?: string;
+}
+
+export interface TextareaQuestion extends BaseQuestion {
+  type: 'textarea';
+  default?: string;
+  placeholder?: string;
+  rows?: number;
+}
+
+export type UserRespondQuestion = CheckboxQuestion
+  | CheckboxesQuestion
+  | RadioQuestion
+  | SelectQuestion
+  | TextQuestion
+  | TextareaQuestion;
+
+export interface Props {
+  id?: string;
+  title?: string;
+  description?: string;
+  questions: UserRespondQuestion[];
+  submitLabel?: string;
+  action?: string;
+  token?: string;
+  class?: string;
+}
+
+const {
+  id = 'response',
+  title = 'Your response',
+  description,
+  questions,
+  submitLabel = 'Submit response',
+  action,
+  token,
+  class: className,
+} = Astro.props;
+
+if (!Array.isArray(questions) || questions.length === 0) {
+  throw new Error('UserRespond requires at least one question.');
+}
+
+const questionIds = questions.map((question) => question.id);
+if (questionIds.some((questionId) => !questionId.trim())) {
+  throw new Error('UserRespond question ids must not be empty.');
+}
+if (new Set(questionIds).size !== questionIds.length) {
+  throw new Error('UserRespond question ids must be unique.');
+}
+for (const question of questions) {
+  if ('options' in question && question.options.length === 0) {
+    throw new Error(`UserRespond question "${question.id}" requires at least one option.`);
+  }
+}
+
+const inputId = (questionId: string, suffix?: string) =>
+  `bk-response-${id}-${questionId}${suffix ? `-${suffix}` : ''}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+---
+
+<section class:list={['bk-user-respond', className]} data-bk-user-respond>
+  <form
+    class="bk-response-form"
+    data-bk-response-form
+    data-bk-response-id={id}
+    data-bk-response-action={action}
+    data-bk-response-token={token}
+  >
+    <header class="bk-response-header">
+      <h2 class="bk-response-title" data-nav="false">{title}</h2>
+      {description && <p class="bk-response-description">{description}</p>}
+    </header>
+
+    <div class="bk-response-questions">
+      {questions.map((question) => (
+        <fieldset
+          class="bk-response-question"
+          data-bk-question-id={question.id}
+          data-bk-question-type={question.type}
+        >
+          <legend>
+            {question.label}
+            {question.required && <span class="bk-response-required" aria-label="required">Required</span>}
+          </legend>
+          {question.description && <p class="bk-response-help">{question.description}</p>}
+
+          {question.type === 'checkbox' && (
+            <label class="bk-response-choice" for={inputId(question.id)}>
+              <input
+                id={inputId(question.id)}
+                name={question.id}
+                type="checkbox"
+                checked={question.default}
+                required={question.required}
+              />
+              <span>Yes</span>
+            </label>
+          )}
+
+          {question.type === 'checkboxes' && (
+            <div class="bk-response-options">
+              {question.options.map((option, optionIndex) => (
+                <label class="bk-response-choice" for={inputId(question.id, String(optionIndex))}>
+                  <input
+                    id={inputId(question.id, String(optionIndex))}
+                    name={question.id}
+                    type="checkbox"
+                    value={option.value}
+                    checked={question.default?.includes(option.value)}
+                    data-bk-required-group={question.required ? question.id : undefined}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    {option.description && <small>{option.description}</small>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {question.type === 'radio' && (
+            <div class="bk-response-options">
+              {question.options.map((option, optionIndex) => (
+                <label class="bk-response-choice" for={inputId(question.id, String(optionIndex))}>
+                  <input
+                    id={inputId(question.id, String(optionIndex))}
+                    name={question.id}
+                    type="radio"
+                    value={option.value}
+                    checked={question.default === option.value}
+                    required={question.required}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    {option.description && <small>{option.description}</small>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {question.type === 'select' && (
+            <select id={inputId(question.id)} name={question.id} required={question.required}>
+              <option value="" selected={!question.default} disabled={question.required}>
+                {question.placeholder ?? 'Choose an option'}
+              </option>
+              {question.options.map((option) => (
+                <option value={option.value} selected={question.default === option.value}>{option.label}</option>
+              ))}
+            </select>
+          )}
+
+          {question.type === 'text' && (
+            <input
+              id={inputId(question.id)}
+              name={question.id}
+              type="text"
+              value={question.default}
+              placeholder={question.placeholder}
+              required={question.required}
+            />
+          )}
+
+          {question.type === 'textarea' && (
+            <textarea
+              id={inputId(question.id)}
+              name={question.id}
+              rows={question.rows ?? 5}
+              placeholder={question.placeholder}
+              required={question.required}
+            >{question.default}</textarea>
+          )}
+        </fieldset>
+      ))}
+    </div>
+
+    <div class="bk-response-actions">
+      <button class="bk-response-submit" type="submit">{submitLabel}</button>
+      <output class="bk-response-status" aria-live="polite"></output>
+    </div>
+  </form>
+</section>
+
+<script is:inline>
+  (() => {
+    function initializeUserRespond(form) {
+      if (!(form instanceof HTMLFormElement) || form.dataset.bkResponseReady === 'true') return;
+      form.dataset.bkResponseReady = 'true';
+
+      const status = form.querySelector('.bk-response-status');
+      const submitButton = form.querySelector('.bk-response-submit');
+      const requiredGroups = [...form.querySelectorAll('[data-bk-required-group]')];
+
+      function updateRequiredGroups() {
+        const groupNames = new Set(requiredGroups.map((input) => input.name));
+        for (const groupName of groupNames) {
+          const inputs = requiredGroups.filter((input) => input.name === groupName);
+          const isMissing = !inputs.some((input) => input.checked);
+          inputs[0]?.setCustomValidity(isMissing ? 'Select at least one option.' : '');
+        }
+      }
+
+      function collectAnswers() {
+        const answers = {};
+        const questions = form.querySelectorAll('[data-bk-question-id]');
+        for (const question of questions) {
+          const questionId = question.dataset.bkQuestionId;
+          const questionType = question.dataset.bkQuestionType;
+          if (!questionId || !questionType) continue;
+
+          if (questionType === 'checkbox') {
+            answers[questionId] = question.querySelector('input[type="checkbox"]')?.checked ?? false;
+            continue;
+          }
+          if (questionType === 'checkboxes') {
+            answers[questionId] = [...question.querySelectorAll('input[type="checkbox"]:checked')]
+              .map((input) => input.value);
+            continue;
+          }
+          if (questionType === 'radio') {
+            answers[questionId] = question.querySelector('input[type="radio"]:checked')?.value ?? '';
+            continue;
+          }
+          answers[questionId] = question.querySelector('input, select, textarea')?.value ?? '';
+        }
+        return answers;
+      }
+
+      async function copySubmission(submission) {
+        const formatted = JSON.stringify(submission, null, 2);
+        await navigator.clipboard.writeText(formatted);
+        if (status) status.textContent = 'No callback is configured. The response JSON was copied to your clipboard.';
+      }
+
+      async function submitResponse(submission) {
+        const defaultAction = document.querySelector('meta[name="briefkit-response-endpoint"]')?.content;
+        const defaultToken = document.querySelector('meta[name="briefkit-response-token"]')?.content;
+        const explicitAction = form.dataset.bkResponseAction;
+        const endpoint = explicitAction || defaultAction;
+        const responseToken = explicitAction ? form.dataset.bkResponseToken : defaultToken;
+
+        if (!endpoint) {
+          await copySubmission(submission);
+          return false;
+        }
+
+        const headers = { 'content-type': 'application/json' };
+        if (responseToken) headers.authorization = `Bearer ${responseToken}`;
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(submission),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error ?? `Submission failed with HTTP ${response.status}`);
+        form.querySelectorAll('input, select, textarea, button').forEach((control) => { control.disabled = true; });
+        if (status) status.textContent = 'Response submitted. You can return to the chat.';
+        return true;
+      }
+
+      requiredGroups.forEach((input) => input.addEventListener('change', updateRequiredGroups));
+      updateRequiredGroups();
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        updateRequiredGroups();
+        if (!form.reportValidity()) return;
+
+        const submission = {
+          schemaVersion: 1,
+          formId: form.dataset.bkResponseId || 'response',
+          answers: collectAnswers(),
+          submittedAt: new Date().toISOString(),
+          pageUrl: window.location.href,
+        };
+
+        if (submitButton) submitButton.disabled = true;
+        if (status) status.textContent = 'Submitting…';
+        try {
+          const submittedToCallback = await submitResponse(submission);
+          if (!submittedToCallback && submitButton) submitButton.disabled = false;
+        } catch (error) {
+          if (submitButton) submitButton.disabled = false;
+          if (status) status.textContent = error instanceof Error ? error.message : 'Submission failed.';
+        }
+      });
+    }
+
+    document.querySelectorAll('[data-bk-response-form]').forEach(initializeUserRespond);
+  })();
+</script>

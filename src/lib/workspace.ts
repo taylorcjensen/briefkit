@@ -15,6 +15,10 @@ export interface WorkspaceOptions {
   outDir?: string;
   port?: number;
   site?: string;
+  response?: {
+    endpoint: string;
+    token: string;
+  };
 }
 
 export interface WorkspaceInfo {
@@ -64,6 +68,7 @@ export async function syncWorkspace(workspaceDir: string, report: ReportInfo, op
       author: report.config.author,
       buildTime: new Date().toLocaleString(),
       colorMode: options.colorMode,
+      response: options.response,
       pages: report.pages.map((page) => ({
         file: page.file,
         route: page.route,
@@ -506,6 +511,8 @@ function firstDifferentIndex(left, right) {
   buildTime={reportData.buildTime}
   colorMode={reportData.colorMode}
   assetBase={relativePageHref(currentPage.route, '/')}
+  responseEndpoint={reportData.response?.endpoint}
+  responseToken={reportData.response?.token}
 >
   <Content />
 </ReportLayout>

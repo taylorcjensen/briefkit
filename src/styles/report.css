@@ -313,6 +313,92 @@ td { color: var(--bk-ink); }
 .tip:hover > span,
 .tip:focus > span { display: block; }
 
+.bk-user-respond {
+  margin: 20px 0 28px;
+  background: var(--bk-paper);
+  border: 1px solid var(--bk-line);
+  border-top: 4px solid var(--bk-accent);
+  box-shadow: 0 2px 10px rgba(0,0,0,.06);
+}
+.bk-response-form { margin: 0; }
+.bk-response-header {
+  padding: 16px 18px;
+  background: var(--bk-head);
+  border-bottom: 1px solid var(--bk-line);
+}
+.bk-content .bk-response-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 20px;
+}
+.bk-response-description { margin: 6px 0 0 !important; color: var(--bk-muted); }
+.bk-response-questions { padding: 0 18px; }
+.bk-response-question {
+  min-width: 0;
+  margin: 0;
+  padding: 17px 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--bk-line);
+}
+.bk-response-question legend { padding: 0; font-weight: 800; }
+.bk-response-required {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--bk-warning);
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.bk-response-help { margin: 4px 0 10px !important; color: var(--bk-muted); font-size: 14px; }
+.bk-response-options { display: grid; gap: 7px; }
+.bk-response-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: fit-content;
+  cursor: pointer;
+}
+.bk-response-choice input { margin-top: .25em; accent-color: var(--bk-accent); }
+.bk-response-choice strong { display: block; }
+.bk-response-choice small { display: block; margin-top: 1px; color: var(--bk-muted); font-size: 13px; }
+.bk-response-question > input[type='text'],
+.bk-response-question > select,
+.bk-response-question > textarea {
+  width: min(100%, 760px);
+  padding: 9px 10px;
+  background: var(--bk-bg);
+  border: 1px solid var(--bk-line);
+  border-radius: 4px;
+  color: var(--bk-ink);
+  font: inherit;
+}
+.bk-response-question > textarea { display: block; resize: vertical; }
+.bk-response-question > input:focus,
+.bk-response-question > select:focus,
+.bk-response-question > textarea:focus {
+  outline: 2px solid var(--bk-accent);
+  outline-offset: 2px;
+}
+.bk-response-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+}
+.bk-response-submit {
+  padding: 8px 13px;
+  background: var(--bk-accent);
+  border: 1px solid var(--bk-accent);
+  border-radius: 4px;
+  color: var(--bk-paper);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.bk-response-submit:disabled { cursor: wait; opacity: .62; }
+.bk-response-status { color: var(--bk-muted); font-size: 14px; }
+
 .bk-footer {
   padding: 14px 0 18px;
   border-top: 1px solid var(--bk-line);

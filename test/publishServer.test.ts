@@ -148,6 +148,157 @@ test('static serving hides internal paths, excludes unindexed briefs, and cleans
   }
 });
 
+test('response channels separate submit and wait credentials and accept one response', async () => {
+  const server = await startPublishServer('response-channel');
+  const responseBody = {
+    schemaVersion: 1,
+    formId: 'deployment',
+    answers: { approved: true, strategy: 'rolling', targets: ['web', 'worker'] },
+    submittedAt: '2026-09-13T12:00:00.000Z',
+    pageUrl: `${server.origin}/deployment/`,
+  };
+
+  try {
+    const unauthorizedCreate = await fetch(`${server.origin}/api/response-channels`, { method: 'POST', body: '{}' });
+    assert.equal(unauthorizedCreate.status, 401);
+
+    const createResponse = await fetch(`${server.origin}/api/response-channels`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const createText = await createResponse.text();
+    assert.equal(createResponse.status, 201, createText);
+    const channel = JSON.parse(createText) as {
+      id: string;
+      submitUrl: string;
+      submitToken: string;
+      waitUrl: string;
+      waitToken: string;
+      expiresAt: string;
+    };
+    assert.match(channel.id, /^[a-f0-9]{32}$/);
+    assert.notEqual(channel.submitToken, channel.waitToken);
+
+    const unauthorizedWait = await fetch(channel.waitUrl, {
+      headers: { authorization: `Bearer ${channel.submitToken}` },
+    });
+    assert.equal(unauthorizedWait.status, 401);
+
+    const malformedSubmission = await fetch(channel.submitUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ answers: {} }),
+    });
+    assert.equal(malformedSubmission.status, 400);
+
+    const accepted = await fetch(channel.submitUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(responseBody),
+    });
+    assert.equal(accepted.status, 201, await accepted.text());
+
+    const duplicate = await fetch(channel.submitUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(responseBody),
+    });
+    assert.equal(duplicate.status, 409);
+
+    const waitResponse = await fetch(channel.waitUrl, {
+      headers: { authorization: `Bearer ${channel.waitToken}` },
+    });
+    const waitText = await waitResponse.text();
+    assert.equal(waitResponse.status, 200, waitText);
+    assert.deepEqual(JSON.parse(waitText), responseBody);
+
+    const deleted = await fetch(channel.waitUrl, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${channel.waitToken}` },
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal((await fetch(channel.waitUrl, { headers: { authorization: `Bearer ${channel.waitToken}` } })).status, 404);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('expired response channels are rejected and removed', async () => {
+  const server = await startPublishServer('response-expired', undefined, { BRIEFKIT_RESPONSE_DURATION: '0d' });
+  try {
+    const createResponse = await fetch(`${server.origin}/api/response-channels`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(createResponse.status, 201);
+    const channel = await createResponse.json() as { waitUrl: string; waitToken: string };
+    const expired = await fetch(channel.waitUrl, { headers: { authorization: `Bearer ${channel.waitToken}` } });
+    assert.equal(expired.status, 410);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('response channels reject submissions that finish after expiry', async () => {
+  const server = await startPublishServer('response-expires-during-submit');
+  try {
+    const createResponse = await fetch(`${server.origin}/api/response-channels`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(createResponse.status, 201);
+    const channel = await createResponse.json() as { id: string; submitUrl: string; submitToken: string };
+    const channelDir = path.join(server.storageDir, '.briefkit-responses', channel.id);
+    const channelPath = path.join(channelDir, 'channel.json');
+    const channelMetadata = JSON.parse(await fs.readFile(channelPath, 'utf8')) as Record<string, unknown>;
+    channelMetadata.expiresAt = new Date(Date.now() + 200).toISOString();
+    await fs.writeFile(channelPath, JSON.stringify(channelMetadata), 'utf8');
+
+    const responseBody = JSON.stringify({
+      schemaVersion: 1,
+      formId: 'slow-response',
+      answers: { approved: true },
+      submittedAt: '2026-09-13T12:00:00.000Z',
+      pageUrl: `${server.origin}/slow-response/`,
+    });
+    const result = await postBodyAfterDelay(channel.submitUrl, responseBody, channel.submitToken, 300);
+
+    assert.equal(result.status, 410, result.text);
+    await assert.rejects(fs.access(path.join(channelDir, 'response.json')));
+  } finally {
+    await server.stop();
+  }
+});
+
+test('response channels reject submissions above the configured size limit', async () => {
+  const server = await startPublishServer('response-size', undefined, { BRIEFKIT_MAX_RESPONSE_BYTES: '128' });
+  try {
+    const createResponse = await fetch(`${server.origin}/api/response-channels`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const channel = await createResponse.json() as { submitUrl: string; submitToken: string };
+    const oversized = await fetch(channel.submitUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        formId: 'oversized',
+        answers: { notes: 'x'.repeat(256) },
+        submittedAt: '2026-09-13T12:00:00.000Z',
+        pageUrl: `${server.origin}/oversized/`,
+      }),
+    });
+    assert.equal(oversized.status, 413);
+  } finally {
+    await server.stop();
+  }
+});
+
 test('DELETE rejects malformed percent-encoded slugs with 400', async () => {
   const server = await startPublishServer('bad-delete');
   try {
@@ -158,6 +309,72 @@ test('DELETE rejects malformed percent-encoded slugs with 400', async () => {
     assert.equal(response.status, 400);
     assert.match(await response.text(), /Invalid brief slug/);
   } finally {
+    await server.stop();
+  }
+});
+
+test('publish --wait-for-response returns a browser submission to the CLI', { timeout: 120_000 }, async () => {
+  const server = await startPublishServer('publish-response-wait');
+  const reportDir = await makeTempDir('publish-response-report');
+  await fs.writeFile(path.join(reportDir, 'index.mdx'), `---
+title: Publish Response
+---
+import { UserRespond } from 'briefkit';
+
+The report can explain the decision before asking for an answer.
+
+<UserRespond id="publish-choice" questions={[{ id: 'choice', type: 'radio', label: 'Choose', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }], required: true }]} />
+`, 'utf8');
+
+  const child = spawn(process.execPath, [
+    '--import',
+    'tsx/esm',
+    path.join(packageRoot, 'bin', 'briefkit.js'),
+    'publish',
+    reportDir,
+    '--target',
+    server.origin,
+    '--api-key',
+    apiKey,
+    '--wait-for-response',
+    '--no-open',
+    '--no-indexed',
+  ], {
+    cwd: packageRoot,
+    env: { ...process.env, BRIEFKIT_CONFIG_DIR: path.join('/tmp', 'briefkit-test-config-disabled'), NO_COLOR: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+
+  try {
+    await waitForText(() => stdout, 'Waiting for a Briefkit response...', child, () => stderr);
+    const publishedUrl = stdout.match(/^URL: (https?:\/\/\S+)$/m)?.[1];
+    assert(publishedUrl, stdout);
+    const html = await (await fetch(publishedUrl)).text();
+    const endpoint = requiredMetaContent(html, 'briefkit-response-endpoint');
+    const token = requiredMetaContent(html, 'briefkit-response-token');
+    const responseBody = {
+      schemaVersion: 1,
+      formId: 'publish-choice',
+      answers: { choice: 'b' },
+      submittedAt: '2026-09-13T12:00:00.000Z',
+      pageUrl: publishedUrl,
+    };
+    const submitResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(responseBody),
+    });
+    assert.equal(submitResponse.status, 201, await submitResponse.text());
+
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    assert.equal(child.exitCode, 0, stderr);
+    assert.deepEqual(JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}'), responseBody);
+  } finally {
+    if (child.exitCode === null) child.kill('SIGTERM');
     await server.stop();
   }
 });
@@ -321,6 +538,26 @@ function requiredCssUrl(css: string): string {
   return value;
 }
 
+function requiredMetaContent(html: string, name: string): string {
+  const value = html.match(new RegExp(`<meta name="${name}" content="([^"]+)"`))?.[1];
+  assert(value, `Missing ${name} meta tag`);
+  return value;
+}
+
+async function waitForText(
+  currentOutput: () => string,
+  expected: string,
+  child: ChildProcessWithoutNullStreams,
+  currentError: () => string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    if (currentOutput().includes(expected)) return;
+    if (child.exitCode !== null) throw new Error(`Process exited before expected output.\n${currentError()}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for output.\n${currentOutput()}\n${currentError()}`);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -388,6 +625,29 @@ async function stopProcess(serverProcess: ChildProcessWithoutNullStreams): Promi
     new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
   ]);
   if (serverProcess.exitCode === null) serverProcess.kill('SIGKILL');
+}
+
+async function postBodyAfterDelay(url: string, body: string, token: string, delayMs: number): Promise<HttpResult> {
+  return await new Promise<HttpResult>((resolve, reject) => {
+    const request = http.request(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+      },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve({ status: response.statusCode ?? 0, text, json: parseJson(text) });
+      });
+    });
+    request.on('error', reject);
+    request.write(body.slice(0, 1));
+    setTimeout(() => request.end(body.slice(1)), delayMs);
+  });
 }
 
 async function postJson(origin: string, payload: unknown, key: string | undefined): Promise<HttpResult> {

@@ -10,6 +10,14 @@ import { assertOutputDirectoryContentIsReplaceable, isOutputOwnershipMarker, res
 import { acquireOutputLock, type OutputLock } from './outputLock.js';
 import { cleanupWorkspace, createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
 import { normalizePortableAssetUrls } from './portableAssetUrls.js';
+import {
+  createLocalResponseWaiter,
+  createRemoteResponseChannel,
+  deleteRemoteResponseChannel,
+  waitForRemoteResponse,
+  type LocalResponseWaiter,
+  type RemoteResponseChannel,
+} from './responses.js';
 import type { ColorMode } from './types.js';
 
 interface ParsedArgs {
@@ -25,6 +33,7 @@ interface ParsedArgs {
   indexed?: boolean;
   brief?: string;
   backupDir?: string;
+  waitForResponse?: boolean;
 }
 
 interface PublishConfig {
@@ -62,6 +71,9 @@ export async function runCli(argv: string[]): Promise<void> {
 
   if (args.command !== 'dev' && args.command !== 'build' && args.command !== 'publish') {
     throw new Error(`Unknown command: ${args.command}`);
+  }
+  if (args.waitForResponse && args.command === 'dev') {
+    throw new Error('--wait-for-response is supported by build and publish.');
   }
 
   const report = await loadReport(args.reportDir);
@@ -104,10 +116,60 @@ export async function runCli(argv: string[]): Promise<void> {
   const canonicalOutDir = await resolveSafeOutputPath(requestedOutDir, report.reportDir);
   let outputLock: OutputLock | undefined;
   let workspaceDir: string | undefined;
+  let localResponseWaiter: LocalResponseWaiter | undefined;
+  let remoteResponseChannel: RemoteResponseChannel | undefined;
+  let cleanupStarted: Promise<void> | undefined;
+
+  const cleanupOnce = async (): Promise<void> => {
+    cleanupStarted ??= (async () => {
+      try {
+        if (localResponseWaiter) await localResponseWaiter.close();
+      } finally {
+        try {
+          if (remoteResponseChannel) await deleteRemoteResponseChannel(remoteResponseChannel).catch((error) => {
+            console.warn(`Briefkit warning: could not delete response channel: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        } finally {
+          try {
+            if (workspaceDir) await cleanupWorkspaceWithoutMasking(workspaceDir);
+          } finally {
+            try {
+              if (outputLock) await releaseLockWithoutMasking(outputLock);
+            } finally {
+              if (shouldCleanPublishOutDir) await cleanupTemporaryPublishOutput(canonicalOutDir);
+            }
+          }
+        }
+      }
+    })();
+    await cleanupStarted;
+  };
+  const removeSignalHandlers = () => {
+    process.off('SIGINT', handleSigint);
+    process.off('SIGTERM', handleSigterm);
+  };
+  const handleSignal = (signal: NodeJS.Signals) => {
+    removeSignalHandlers();
+    void cleanupOnce().finally(() => process.exit(signalExitCode(signal)));
+  };
+  const handleSigint = () => handleSignal('SIGINT');
+  const handleSigterm = () => handleSignal('SIGTERM');
+  process.prependListener('SIGINT', handleSigint);
+  process.prependListener('SIGTERM', handleSigterm);
 
   try {
     outputLock = await acquireOutputLock(canonicalOutDir, args.command);
     await assertOutputDirectoryContentIsReplaceable(canonicalOutDir, requestedOutDir);
+
+    if (args.waitForResponse && args.command === 'build') {
+      localResponseWaiter = await createLocalResponseWaiter(canonicalOutDir, args.port);
+    }
+    if (args.waitForResponse && args.command === 'publish') {
+      remoteResponseChannel = await createRemoteResponseChannel(publishTarget!, publishApiKey!);
+    }
+    const responseTarget = localResponseWaiter?.target ?? (remoteResponseChannel
+      ? { endpoint: remoteResponseChannel.submitUrl, token: remoteResponseChannel.submitToken }
+      : undefined);
 
     const workspaceOptions: WorkspaceOptions = {
       mode: 'build',
@@ -115,6 +177,7 @@ export async function runCli(argv: string[]): Promise<void> {
       outDir: canonicalOutDir,
       port: args.port,
       site: publishTarget,
+      response: responseTarget,
     };
     const workspace = await createWorkspace(report, workspaceOptions);
     workspaceDir = workspace.dir;
@@ -124,6 +187,7 @@ export async function runCli(argv: string[]): Promise<void> {
     await ensurePublicFallback(report.reportDir, canonicalOutDir);
     await normalizePortableAssetUrls(canonicalOutDir);
     await writeOutputOwnershipMarker(canonicalOutDir);
+    if (args.waitForResponse) await assertBuiltResponseForm(canonicalOutDir);
     const backupPath = backupDirectory
       ? await backupBrief({ report, builtSiteDir: canonicalOutDir, backupDirectory, command: args.command })
       : undefined;
@@ -139,6 +203,13 @@ export async function runCli(argv: string[]): Promise<void> {
       if (backupPath) console.log(`Backup: ${backupPath}`);
       if (result.expiresAt) console.log(`Expires: ${result.expiresAt}`);
       if (result.expiresAt === null) console.log('Expires: never');
+      if (remoteResponseChannel) {
+        if (args.open) openBrowserWithoutFocus(result.url);
+        console.log('Waiting for a Briefkit response...');
+        printSubmission(await waitForRemoteResponse(remoteResponseChannel));
+        await deleteRemoteResponseChannel(remoteResponseChannel);
+        remoteResponseChannel = undefined;
+      }
       return;
     }
 
@@ -146,17 +217,39 @@ export async function runCli(argv: string[]): Promise<void> {
     console.log(`Report: ${report.reportDir}`);
     console.log(`Output: ${canonicalOutDir}`);
     if (backupPath) console.log(`Backup: ${backupPath}`);
+    if (localResponseWaiter) {
+      console.log(`URL: ${localResponseWaiter.pageUrl}`);
+      if (args.open) openBrowserWithoutFocus(localResponseWaiter.pageUrl);
+      console.log('Waiting for a Briefkit response...');
+      printSubmission(await localResponseWaiter.wait());
+    }
   } finally {
-    try {
-      if (workspaceDir) await cleanupWorkspaceWithoutMasking(workspaceDir);
-    } finally {
-      try {
-        if (outputLock) await releaseLockWithoutMasking(outputLock);
-      } finally {
-        if (shouldCleanPublishOutDir) await cleanupTemporaryPublishOutput(canonicalOutDir);
-      }
+    removeSignalHandlers();
+    await cleanupOnce();
+  }
+}
+
+async function assertBuiltResponseForm(outDir: string): Promise<void> {
+  if (await directoryContainsResponseForm(outDir)) return;
+  throw new Error('--wait-for-response requires at least one rendered UserRespond component.');
+}
+
+async function directoryContainsResponseForm(directory: string): Promise<boolean> {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory() && await directoryContainsResponseForm(entryPath)) return true;
+    if (entry.isFile() && entry.name.endsWith('.html')) {
+      const html = await fs.readFile(entryPath, 'utf8');
+      if (html.includes('data-bk-response-form')) return true;
     }
   }
+  return false;
+}
+
+function printSubmission(submission: unknown): void {
+  console.log('Briefkit response received');
+  console.log(JSON.stringify(submission));
 }
 
 export async function cleanupTemporaryPublishOutput(outDir: string): Promise<void> {
@@ -293,6 +386,11 @@ function parseArgs(args: string[]): ParsedArgs {
     const arg = args[index];
     if (arg === '--no-open') {
       parsed.open = false;
+      index += 1;
+      continue;
+    }
+    if (arg === '--wait-for-response') {
+      parsed.waitForResponse = true;
       index += 1;
       continue;
     }
@@ -514,8 +612,8 @@ function printHelp(): void {
 
 Usage:
   briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
-  briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
-  briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
+  briefkit build [report-dir] [--out ./brief] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+  briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
   briefkit config set --backup-dir /path/to/backups
   briefkit publish-config set --target https://briefs.example.com --api-key KEY

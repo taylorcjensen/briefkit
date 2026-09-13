@@ -1,6 +1,6 @@
 {
   "name": "briefkit",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Static Markdown/MDX report-site toolkit for fast agent-authored briefs.",
   "keywords": [
     "agent",

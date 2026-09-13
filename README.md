@@ -4,7 +4,7 @@
 
 Briefkit turns Markdown or MDX folders into local, static, decision-oriented report websites.
 
-It is built for agent-authored briefs: research summaries, comparisons, evidence packs, audits, risk registers, status reports, and one-off decision pages. The source stays simple and portable. Briefkit supplies the shared shell: layout, sidebar navigation, heading TOC, dark/light/auto theme, callouts, tooltips, Mermaid diagrams, and table normalization.
+It is built for agent-authored briefs: research summaries, comparisons, evidence packs, audits, risk registers, status reports, and one-off decision pages. The source stays simple and portable. Briefkit supplies the shared shell: layout, sidebar navigation, heading TOC, dark/light/auto theme, callouts, tooltips, Mermaid diagrams, table normalization, and structured response forms.
 
 Briefkit is not an app framework, dashboard backend, CMS, or structured-data prison. The goal is to keep nuanced analysis easy to write while making the result readable enough to hand to a human.
 
@@ -17,6 +17,7 @@ Briefkit is not an app framework, dashboard backend, CMS, or structured-data pri
 | Full components | Use `index.mdx` or `pages/*.mdx` |
 | Scannable tables | Markdown tables are automatically styled and width-normalized |
 | Mermaid diagrams | Use fenced `mermaid` blocks or the `Mermaid` MDX component |
+| Structured decisions | Put `UserRespond` beside the explanation, then wait for its answers from the CLI |
 | Decision artifacts | Use callouts, dense tables, sidebars, and heading TOCs |
 | Throwaway output | Build static files to `{report-folder}/brief/` |
 | Durable backups | Optionally retain the latest searchable source and built site after `build` or `publish` |
@@ -64,8 +65,8 @@ npm run briefkit -- build examples/basic-report
 
 ```bash
 briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
-briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
-briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY]
+briefkit build [report-dir] [--out ./brief] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY]
 briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
 briefkit config set --backup-dir /path/to/backups
 briefkit publish-config set --target https://briefs.example.com --api-key KEY
@@ -81,6 +82,8 @@ briefkit publish-config set --target https://briefs.example.com --api-key KEY
 | `publish-config` | Save a default publish target and API key | `~/.config/briefkit/publish.json` |
 
 `briefkit dev` opens the browser by default. Agent workflows should not open a separate browser tab after running it. Use `--no-open` only when you explicitly do not want a browser opened.
+
+`build` and `publish` also open the browser when `--wait-for-response` is present. The command blocks until a `UserRespond` form is submitted, then prints the structured response as JSON on its final output line. This lets an agent receive the answers through the same shell tool call that launched Briefkit.
 
 Build/dev generated Astro workspaces live under the OS temp directory. The report folder only needs to contain your source files and optional build output.
 
@@ -199,6 +202,9 @@ The GitHub Actions workflow publishes multi-architecture images to `ghcr.io/tayl
 | `BRIEFKIT_DEFAULT_INDEXED` | No | `true` | Whether published briefs appear on the homepage when the client does not override indexing |
 | `BRIEFKIT_STORAGE_DIR` | No | `/briefs` | Container storage path |
 | `BRIEFKIT_MAX_BODY_BYTES` | No | `52428800` | Maximum JSON upload size |
+| `BRIEFKIT_RESPONSE_DURATION` | No | `1d` | Lifetime of one-shot response channels |
+| `BRIEFKIT_RESPONSE_WAIT_MS` | No | `25000` | Long-poll window used by waiting publish clients |
+| `BRIEFKIT_MAX_RESPONSE_BYTES` | No | `262144` | Maximum submitted response size |
 
 `BRIEFKIT_API_KEYS` is a comma-separated allowlist. There are no user accounts; use separate keys if you want to track or rotate access by person or machine.
 
@@ -238,6 +244,7 @@ briefkit publish /path/to/report --duration 30d
 briefkit publish /path/to/report --duration forever
 briefkit publish /path/to/report --indexed
 briefkit publish /path/to/report --no-indexed
+briefkit publish /path/to/report --wait-for-response
 briefkit unpublish article-title-slug
 briefkit unpublish https://briefs.example.com/article-title-slug/
 ```
@@ -420,6 +427,7 @@ Briefkit v0 intentionally keeps the primitive set small.
 | `Tooltip` | Inline explanations for jargon and acronyms |
 | `BriefTable` | Explicit tables with captions, sticky columns, or data rows |
 | `Mermaid` | Flowcharts, sequence diagrams, state diagrams, and other Mermaid visuals |
+| `UserRespond` | Checkboxes, radio choices, dropdowns, short answers, and freeform responses |
 
 ### Callout
 
@@ -504,6 +512,81 @@ import { Mermaid } from 'briefkit';
   `}
 />
 ```
+
+### UserRespond
+
+`UserRespond` sits inside an ordinary MDX report. Put as much explanation, evidence, and comparison material as needed before or after the form.
+
+```mdx
+import { Callout, BriefTable, UserRespond } from 'briefkit';
+
+<Callout type="warning" title="Constraint">
+Production must remain available throughout the deployment.
+</Callout>
+
+## Options
+
+| Strategy | Main tradeoff |
+|---|---|
+| Rolling | Slower, with limited concurrent versions |
+| Blue/green | Faster rollback, with double capacity during the switch |
+
+<UserRespond
+  id="deployment"
+  title="Choose the deployment"
+  description="The agent will continue after this form is submitted."
+  questions={[
+    {
+      id: 'reviewed',
+      type: 'checkbox',
+      label: 'I reviewed the constraint',
+      required: true,
+    },
+    {
+      id: 'targets',
+      type: 'checkboxes',
+      label: 'Deploy these services',
+      required: true,
+      options: [
+        { value: 'web', label: 'Web application' },
+        { value: 'worker', label: 'Background workers' },
+      ],
+    },
+    {
+      id: 'strategy',
+      type: 'radio',
+      label: 'Deployment strategy',
+      required: true,
+      options: [
+        { value: 'rolling', label: 'Rolling' },
+        { value: 'blue-green', label: 'Blue/green' },
+      ],
+    },
+    {
+      id: 'window',
+      type: 'select',
+      label: 'Maintenance window',
+      options: [
+        { value: 'now', label: 'Start now' },
+        { value: 'later', label: 'Schedule it' },
+      ],
+    },
+    { id: 'owner', type: 'text', label: 'Approver', placeholder: 'Name' },
+    { id: 'notes', type: 'textarea', label: 'Additional instructions', rows: 5 },
+  ]}
+/>
+```
+
+Use one of the waiting commands when the caller needs the result:
+
+```bash
+briefkit build /path/to/report --wait-for-response
+briefkit publish /path/to/report --wait-for-response
+```
+
+A waiting local build serves its static output on loopback and opens that URL. A waiting publish creates an expiring, one-shot response channel on the publish server and opens the published URL. The public page receives only the submit credential; the CLI keeps the separate wait credential private.
+
+Without `--wait-for-response` or an explicit `action` prop, the component copies the response JSON to the browser clipboard instead of sending it. Set `action` when the report should post to another JSON webhook. Any token supplied through the component is visible in the generated page, so use only a narrow, disposable submit credential.
 
 ## Data and local imports
 

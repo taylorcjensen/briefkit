@@ -736,6 +736,25 @@ The wrapper passes layout data including:
 - build time;
 - color mode.
 
+## Interactive response forms
+
+Briefkit reports may include a `UserRespond` component without turning the report into an application shell. Explanation, evidence, tables, and caveats remain ordinary Markdown or MDX; the form is one component in that reading flow.
+
+Supported controls:
+
+- one boolean checkbox;
+- multiple checkboxes;
+- radio choices;
+- dropdown selection;
+- one-line text;
+- multiline freeform text.
+
+Static output remains the default. A form with no callback copies its JSON response to the browser clipboard. An author can also give the component an explicit webhook action.
+
+For agent-driven decisions, `briefkit build --wait-for-response` serves the built output on loopback and waits for one submission. `briefkit publish --wait-for-response` creates an expiring server-side response channel, publishes the brief with a narrow submit credential, and long-polls with a separate private wait credential. Both commands print the response JSON before returning to the caller.
+
+Response channels are one-shot, size-limited, and stored outside public brief paths. The submit credential is necessarily visible in the page source; it grants only the ability to answer that channel. The wait credential stays in the CLI process and can read or delete the channel.
+
 ## Open questions
 
 - Whether route output should support `.html` mode later for direct file browsing.

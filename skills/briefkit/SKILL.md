@@ -68,7 +68,7 @@ Do not use Briefkit for:
    If using the local repo without `npm link`:
 
    ```bash
-   /Users/taylorjensen/Code/briefkit/bin/briefkit.js dev "$REPORT"
+   /Users/tcj/Code/briefkit/bin/briefkit.js dev "$REPORT"
    ```
 
 5. Let Briefkit open the browser. Do not open a second tab yourself.
@@ -147,7 +147,7 @@ Lead with the practical answer.
 | B | Deep analysis | More work |
 ```
 
-Use this when speed and portability matter. Use MDX when you need `Callout`, `BriefTable`, `Mermaid`, `Tooltip`, imported data, or local components.
+Use this when speed and portability matter. Use MDX when you need `Callout`, `BriefTable`, `Mermaid`, `Tooltip`, `UserRespond`, imported data, or local components.
 
 ## MDX template
 
@@ -291,6 +291,50 @@ Use for jargon, acronyms, products, mods, systems, and ambiguous shorthand.
 ```
 
 Tooltip text should explain practical effect, not just define the term.
+
+### `UserRespond`
+
+Use `UserRespond` when the agent needs structured answers after the reader reviews a report. Keep explanation, evidence, tables, and caveats as ordinary MDX around the component.
+
+Supported question types:
+
+```text
+checkbox | checkboxes | radio | select | text | textarea
+```
+
+```mdx
+import { UserRespond } from 'briefkit';
+
+<UserRespond
+  id="deployment"
+  title="Deployment decision"
+  questions={[
+    { id: 'approved', type: 'checkbox', label: 'Approve deployment', required: true },
+    {
+      id: 'strategy',
+      type: 'radio',
+      label: 'Strategy',
+      options: [
+        { value: 'rolling', label: 'Rolling' },
+        { value: 'blue-green', label: 'Blue/green' },
+      ],
+      required: true,
+    },
+    { id: 'notes', type: 'textarea', label: 'Additional instructions' },
+  ]}
+/>
+```
+
+To return the answers through the same shell tool call, run `build` or `publish` with `--wait-for-response` and give the shell command a long enough timeout for human input:
+
+```bash
+briefkit build "$REPORT" --wait-for-response
+briefkit publish "$REPORT" --wait-for-response
+```
+
+Do not start `briefkit dev` first for this flow. The waiting command opens the browser, blocks until submission, and prints the response JSON on its final output line. Use `--no-open` only when the browser is already open or the URL will be shared another way.
+
+Without a waiting command or an explicit `action` prop, `UserRespond` copies its response JSON to the clipboard.
 
 ## Writing standards
 
