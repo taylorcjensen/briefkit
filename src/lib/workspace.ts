@@ -23,20 +23,30 @@ export interface WorkspaceInfo {
 }
 
 export async function createWorkspace(report: ReportInfo, options: WorkspaceOptions): Promise<WorkspaceInfo> {
-  const workspaceDir = workspacePath(report.reportDir, options.port);
+  const workspaceDir = await createWorkspaceDir(report.reportDir, options.mode);
   const outDir = path.resolve(options.outDir ?? path.join(report.reportDir, 'brief'));
-  await fs.rm(workspaceDir, { recursive: true, force: true });
-  await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
 
-  await writeJson(path.join(workspaceDir, 'package.json'), {
-    type: 'module',
-    dependencies: {},
-  });
-  await linkNodeModules(workspaceDir);
-  await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
-  await syncWorkspace(workspaceDir, report, options);
+  try {
+    await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
+    await writeJson(path.join(workspaceDir, 'package.json'), {
+      type: 'module',
+      dependencies: {},
+    });
+    await linkNodeModules(workspaceDir);
+    await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
+    await syncWorkspace(workspaceDir, report, options);
+  } catch (error) {
+    await cleanupWorkspace(workspaceDir).catch((cleanupError) => {
+      console.warn(`Briefkit warning: could not remove failed workspace ${workspaceDir}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    });
+    throw error;
+  }
 
   return { dir: workspaceDir, outDir };
+}
+
+export async function cleanupWorkspace(workspaceDir: string): Promise<void> {
+  await fs.rm(workspaceDir, { recursive: true, force: true });
 }
 
 export async function syncWorkspace(workspaceDir: string, report: ReportInfo, options: WorkspaceOptions): Promise<void> {
@@ -97,11 +107,16 @@ async function promoteGeneratedWorkspace(stagingDir: string, workspaceDir: strin
   await fs.rm(stagingDir, { recursive: true, force: true });
 }
 
-function workspacePath(reportDir: string, port?: number): string {
+async function createWorkspaceDir(reportDir: string, mode: WorkspaceOptions['mode']): Promise<string> {
+  const parentDir = workspaceParentPath(reportDir);
+  await fs.mkdir(parentDir, { recursive: true });
+  return await fs.mkdtemp(path.join(parentDir, `${mode}-`));
+}
+
+function workspaceParentPath(reportDir: string): string {
   const slug = path.basename(reportDir).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'report';
   const hash = crypto.createHash('sha1').update(reportDir).digest('hex').slice(0, 8);
-  const suffix = port ? `-${port}` : '';
-  return path.join(os.tmpdir(), 'briefkit', `${slug}-${hash}${suffix}`);
+  return path.join(os.tmpdir(), 'briefkit', 'workspaces', `${slug}-${hash}`);
 }
 
 function packageRoot(): string {
@@ -264,10 +279,9 @@ async function writeProcessedPage(workspaceDir: string, page: PageInfo, reportTi
   await fs.writeFile(targetPath, processed, 'utf8');
 }
 
-function processedPagePath(page: PageInfo, workspaceDir?: string): string {
-  const root = workspaceDir ?? workspacePath(path.dirname(page.absolutePath));
+function processedPagePath(page: PageInfo, workspaceDir: string): string {
   const processedFile = page.file.replace(/\.md$/i, '.mdx');
-  return path.join(root, 'src', 'processed', processedFile);
+  return path.join(workspaceDir, 'src', 'processed', processedFile);
 }
 
 function warnIfReportPageStartsWithH1(page: PageInfo, content: string): void {

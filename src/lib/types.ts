@@ -16,6 +16,9 @@ export interface BriefkitConfig {
   description?: string;
   image?: string;
   pages?: PageConfig[];
+  backup?: {
+    id?: string;
+  };
 }
 
 export interface PageInfo {

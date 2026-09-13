@@ -28,7 +28,12 @@ export async function runBriefkit(args: string[], options: { cwd?: string; env?:
   try {
     const result = await execFileAsync(process.execPath, ['--import', 'tsx/esm', path.join(packageRoot, 'bin', 'briefkit.js'), ...args], {
       cwd: options.cwd ?? packageRoot,
-      env: { ...process.env, ...options.env, NO_COLOR: '1' },
+      env: {
+        ...process.env,
+        BRIEFKIT_CONFIG_DIR: path.join(os.tmpdir(), 'briefkit-test-config-disabled'),
+        ...options.env,
+        NO_COLOR: '1',
+      },
       maxBuffer: 1024 * 1024 * 10,
     });
     return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };

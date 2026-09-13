@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { build, dev } from 'astro';
+import { backupBrief, loadBackupDirectory, saveBackupDirectory } from './backup.js';
 import { loadReport } from './report.js';
-import { assertCanPrepareOutputDirectory, isOutputOwnershipMarker, writeOutputOwnershipMarker } from './outputPolicy.js';
-import { createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
+import { assertOutputDirectoryContentIsReplaceable, isOutputOwnershipMarker, resolveSafeOutputPath, writeOutputOwnershipMarker } from './outputPolicy.js';
+import { acquireOutputLock, type OutputLock } from './outputLock.js';
+import { cleanupWorkspace, createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
 import { normalizePortableAssetUrls } from './portableAssetUrls.js';
 import type { ColorMode } from './types.js';
 
@@ -21,6 +24,7 @@ interface ParsedArgs {
   duration?: string;
   indexed?: boolean;
   brief?: string;
+  backupDir?: string;
 }
 
 interface PublishConfig {
@@ -46,6 +50,11 @@ export async function runCli(argv: string[]): Promise<void> {
     return;
   }
 
+  if (args.command === 'config') {
+    await saveUserConfig(args);
+    return;
+  }
+
   if (args.command === 'unpublish') {
     await unpublishBriefFromArgs(args);
     return;
@@ -61,47 +70,73 @@ export async function runCli(argv: string[]): Promise<void> {
   const publishApiKey = args.command === 'publish' ? args.apiKey ?? publishConfig?.apiKey : undefined;
   if (args.command === 'publish' && !publishTarget) throw new Error('Publish target is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
   if (args.command === 'publish' && !publishApiKey) throw new Error('Publish API key is required. Run: briefkit publish-config set --target https://briefs.example.com --api-key KEY');
+  if (args.command === 'dev') {
+    const workspaceOptions: WorkspaceOptions = {
+      mode: 'dev',
+      colorMode: args.colorMode,
+      outDir: args.outDir,
+      port: args.port,
+      site: publishTarget,
+    };
+    const workspace = await createWorkspace(report, workspaceOptions);
+    let server: Awaited<ReturnType<typeof dev>>;
+    try {
+      server = await runInWorkspace(workspace.dir, () => dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } }));
+    } catch (error) {
+      await cleanupWorkspaceWithoutMasking(workspace.dir);
+      throw error;
+    }
+    attachDevWorkspaceSync(server, workspace.dir, report.reportDir, workspaceOptions);
+    attachDevWorkspaceCleanup(server, workspace.dir);
+    const address = server.address;
+    const url = typeof address === 'object' && address ? `http://localhost:${address.port}` : 'http://localhost';
+    if (args.open) openBrowserWithoutFocus(url);
+    console.log('Briefkit dev server running');
+    console.log(`Report: ${report.reportDir}`);
+    console.log(`URL: ${url}`);
+    if (args.open) console.log('Opened browser window in background.');
+    return;
+  }
+
+  const backupDirectory = await loadBackupDirectory();
   const shouldCleanPublishOutDir = args.command === 'publish' && !args.outDir;
-  const outDir = shouldCleanPublishOutDir ? await fs.mkdtemp(path.join(os.tmpdir(), 'briefkit-publish-')) : args.outDir;
-  const workspaceOptions: WorkspaceOptions = {
-    mode: args.command === 'dev' ? 'dev' : 'build',
-    colorMode: args.colorMode,
-    outDir,
-    port: args.port,
-    site: publishTarget,
-  };
+  const requestedOutDir = shouldCleanPublishOutDir ? await fs.mkdtemp(path.join(os.tmpdir(), 'briefkit-publish-')) : args.outDir ?? path.join(report.reportDir, 'brief');
+  const canonicalOutDir = await resolveSafeOutputPath(requestedOutDir, report.reportDir);
+  let outputLock: OutputLock | undefined;
+  let workspaceDir: string | undefined;
 
   try {
+    outputLock = await acquireOutputLock(canonicalOutDir, args.command);
+    await assertOutputDirectoryContentIsReplaceable(canonicalOutDir, requestedOutDir);
+
+    const workspaceOptions: WorkspaceOptions = {
+      mode: 'build',
+      colorMode: args.colorMode,
+      outDir: canonicalOutDir,
+      port: args.port,
+      site: publishTarget,
+    };
     const workspace = await createWorkspace(report, workspaceOptions);
+    workspaceDir = workspace.dir;
 
-    if (args.command === 'dev') {
-      const server = await runInWorkspace(workspace.dir, () => dev({ root: workspace.dir, server: { host: 'localhost', port: args.port, open: false } }));
-      attachDevWorkspaceSync(server, workspace.dir, report.reportDir, workspaceOptions);
-      const address = server.address;
-      const url = typeof address === 'object' && address ? `http://localhost:${address.port}` : 'http://localhost';
-      if (args.open) openBrowserWithoutFocus(url);
-      console.log('Briefkit dev server running');
-      console.log(`Report: ${report.reportDir}`);
-      console.log(`URL: ${url}`);
-      if (args.open) console.log('Opened browser window in background.');
-      return;
-    }
-
-    await assertCanPrepareOutputDirectory(workspace.outDir, report.reportDir);
-    await fs.rm(workspace.outDir, { recursive: true, force: true });
+    await fs.rm(canonicalOutDir, { recursive: true, force: true });
     await runInWorkspace(workspace.dir, () => build({ root: workspace.dir }));
-    await ensurePublicFallback(report.reportDir, workspace.outDir);
-    await normalizePortableAssetUrls(workspace.outDir);
-    await writeOutputOwnershipMarker(workspace.outDir);
+    await ensurePublicFallback(report.reportDir, canonicalOutDir);
+    await normalizePortableAssetUrls(canonicalOutDir);
+    await writeOutputOwnershipMarker(canonicalOutDir);
+    const backupPath = backupDirectory
+      ? await backupBrief({ report, builtSiteDir: canonicalOutDir, backupDirectory, command: args.command })
+      : undefined;
 
     if (args.command === 'publish') {
       const target = publishTarget!;
       const apiKey = publishApiKey!;
-      const files = await collectPublishFiles(workspace.outDir);
+      const files = await collectPublishFiles(canonicalOutDir);
       const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, indexed: args.indexed, files });
       console.log('Briefkit publish complete');
       console.log(`Report: ${report.reportDir}`);
       console.log(`URL: ${result.url}`);
+      if (backupPath) console.log(`Backup: ${backupPath}`);
       if (result.expiresAt) console.log(`Expires: ${result.expiresAt}`);
       if (result.expiresAt === null) console.log('Expires: never');
       return;
@@ -109,9 +144,18 @@ export async function runCli(argv: string[]): Promise<void> {
 
     console.log('Briefkit build complete');
     console.log(`Report: ${report.reportDir}`);
-    console.log(`Output: ${workspace.outDir}`);
+    console.log(`Output: ${canonicalOutDir}`);
+    if (backupPath) console.log(`Backup: ${backupPath}`);
   } finally {
-    if (shouldCleanPublishOutDir && outDir) await cleanupTemporaryPublishOutput(outDir);
+    try {
+      if (workspaceDir) await cleanupWorkspaceWithoutMasking(workspaceDir);
+    } finally {
+      try {
+        if (outputLock) await releaseLockWithoutMasking(outputLock);
+      } finally {
+        if (shouldCleanPublishOutDir) await cleanupTemporaryPublishOutput(canonicalOutDir);
+      }
+    }
   }
 }
 
@@ -131,6 +175,66 @@ async function runInWorkspace<T>(workspaceDir: string, action: () => Promise<T>)
   } finally {
     process.chdir(originalCwd);
   }
+}
+
+async function cleanupWorkspaceWithoutMasking(workspaceDir: string): Promise<void> {
+  try {
+    await cleanupWorkspace(workspaceDir);
+  } catch (error) {
+    console.warn(`Briefkit warning: could not remove workspace ${workspaceDir}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function cleanupWorkspaceSyncWithoutMasking(workspaceDir: string): void {
+  try {
+    fsSync.rmSync(workspaceDir, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(`Briefkit warning: could not remove workspace ${workspaceDir}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function releaseLockWithoutMasking(outputLock: OutputLock): Promise<void> {
+  try {
+    await outputLock.release();
+  } catch (error) {
+    console.warn(`Briefkit warning: could not release output lock ${outputLock.path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function signalExitCode(signal: NodeJS.Signals): number {
+  return signal === 'SIGINT' ? 130 : 143;
+}
+
+function attachDevWorkspaceCleanup(server: Awaited<ReturnType<typeof dev>>, workspaceDir: string): void {
+  const originalStop = server.stop.bind(server);
+  let cleanupStarted: Promise<void> | undefined;
+  const cleanupOnce = async () => {
+    cleanupStarted ??= cleanupWorkspaceWithoutMasking(workspaceDir);
+    await cleanupStarted;
+  };
+  const removeSignalHandlers = () => {
+    process.off('SIGINT', handleSigint);
+    process.off('SIGTERM', handleSigterm);
+  };
+  const handleSignal = (signal: NodeJS.Signals) => {
+    removeSignalHandlers();
+    cleanupWorkspaceSyncWithoutMasking(workspaceDir);
+    cleanupStarted = Promise.resolve();
+    process.exit(signalExitCode(signal));
+  };
+  const handleSigint = () => handleSignal('SIGINT');
+  const handleSigterm = () => handleSignal('SIGTERM');
+
+  process.prependListener('SIGINT', handleSigint);
+  process.prependListener('SIGTERM', handleSigterm);
+  server.stop = async () => {
+    removeSignalHandlers();
+    try {
+      return await originalStop();
+    } finally {
+      await cleanupOnce();
+    }
+  };
 }
 
 function attachDevWorkspaceSync(server: Awaited<ReturnType<typeof dev>>, workspaceDir: string, reportDir: string, options: WorkspaceOptions): void {
@@ -176,7 +280,7 @@ function parseArgs(args: string[]): ParsedArgs {
   };
 
   let index = 1;
-  if (parsed.command === 'publish-config' && args[index] === 'set') index += 1;
+  if ((parsed.command === 'publish-config' || parsed.command === 'config') && args[index] === 'set') index += 1;
   if (parsed.command === 'unpublish') {
     parsed.brief = requiredOptionValue(args[index], 'brief');
     index += 1;
@@ -205,6 +309,11 @@ function parseArgs(args: string[]): ParsedArgs {
     }
     if (arg === '--color-mode') {
       parsed.colorMode = parseColorMode(args[index + 1]);
+      index += 2;
+      continue;
+    }
+    if (arg === '--backup-dir') {
+      parsed.backupDir = requiredOptionValue(args[index + 1], '--backup-dir');
       index += 2;
       continue;
     }
@@ -287,6 +396,13 @@ async function copyDir(source: string, destination: string): Promise<void> {
       await fs.copyFile(sourcePath, destinationPath);
     }
   }
+}
+
+async function saveUserConfig(args: ParsedArgs): Promise<void> {
+  if (!args.backupDir) throw new Error('Usage: briefkit config set --backup-dir /path/to/backups');
+  const backupDirectory = await saveBackupDirectory(args.backupDir);
+  console.log('Briefkit config saved');
+  console.log(`Backup directory: ${backupDirectory}`);
 }
 
 async function savePublishConfig(args: ParsedArgs): Promise<void> {
@@ -401,6 +517,7 @@ Usage:
   briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
   briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
+  briefkit config set --backup-dir /path/to/backups
   briefkit publish-config set --target https://briefs.example.com --api-key KEY
 `);
 }

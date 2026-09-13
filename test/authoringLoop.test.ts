@@ -130,6 +130,30 @@ title: TOC Report
   }
 });
 
+test('dev server removes its unique workspace on SIGTERM shutdown', async (t) => {
+  const reportDir = await makeReportDir('dev-sigterm');
+  await fs.writeFile(path.join(reportDir, 'briefkit.config.mjs'), `export default { title: 'Dev SIGTERM' };\n`, 'utf8');
+  await fs.writeFile(path.join(reportDir, 'index.md'), '# Dev SIGTERM\n\nBody.\n', 'utf8');
+  const port = await reservePort();
+  const child = spawn(process.execPath, ['--import', 'tsx/esm', path.join(packageRoot, 'bin', 'briefkit.js'), 'dev', reportDir, '--port', String(port), '--no-open'], {
+    cwd: packageRoot,
+    env: { ...process.env, BRIEFKIT_TSX_RUN: '1', NO_COLOR: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(async () => stopProcess(child));
+
+  await waitForDevServer(child);
+  const workspaceDir = await findDevWorkspaceDir(reportDir);
+  await fs.access(path.join(workspaceDir, 'astro.config.mjs'));
+
+  child.kill('SIGTERM');
+  await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+
+  assert.equal(child.exitCode, 143);
+  await assert.rejects(fs.access(workspaceDir));
+  assert.deepEqual(await listDevWorkspaces(reportDir), []);
+});
+
 test('dev server resyncs changed pages, config, added and removed pages, public assets, and imported components without deleting workspace internals', async (t) => {
   const reportDir = await makeReportDir('dev-sync');
   const componentsDir = path.join(reportDir, 'components');
@@ -169,7 +193,7 @@ Hidden page.
   t.after(async () => stopProcess(child));
 
   const { url, stdout } = await waitForDevServer(child);
-  const workspaceDir = workspaceDirForPort(reportDir, port);
+  const workspaceDir = await findDevWorkspaceDir(reportDir);
   assert.equal(/Report: (.+)/.exec(stdout)?.[1], reportDir);
   await fs.access(path.join(workspaceDir, 'node_modules'));
   await fs.access(path.join(workspaceDir, 'astro.config.mjs'));
@@ -263,10 +287,28 @@ async function waitForDevServer(child: ChildProcessWithoutNullStreams): Promise<
   return { url, stdout };
 }
 
-function workspaceDirForPort(reportDir: string, port: number): string {
+async function findDevWorkspaceDir(reportDir: string): Promise<string> {
+  const entries = await listDevWorkspaces(reportDir);
+  assert.equal(entries.length, 1, `Expected one dev workspace for ${reportDir}, found ${entries.join(', ')}`);
+  return entries[0];
+}
+
+async function listDevWorkspaces(reportDir: string): Promise<string[]> {
+  const workspaceParentDir = devWorkspaceParentDir(reportDir);
+  try {
+    return (await fs.readdir(workspaceParentDir))
+      .filter((entry) => entry.startsWith('dev-'))
+      .map((entry) => path.join(workspaceParentDir, entry));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+function devWorkspaceParentDir(reportDir: string): string {
   const slug = path.basename(reportDir).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'report';
   const hash = crypto.createHash('sha1').update(reportDir).digest('hex').slice(0, 8);
-  return path.join(os.tmpdir(), 'briefkit', `${slug}-${hash}-${port}`);
+  return path.join(os.tmpdir(), 'briefkit', 'workspaces', `${slug}-${hash}`);
 }
 
 async function fetchText(url: string): Promise<string> {

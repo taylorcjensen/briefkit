@@ -11,16 +11,23 @@ interface OutputMarker {
 const EXPECTED_MARKER: OutputMarker = { owner: 'briefkit', version: 1 };
 
 export async function assertCanPrepareOutputDirectory(outDir: string, reportDir: string): Promise<void> {
+  const canonicalOutputPath = await resolveSafeOutputPath(outDir, reportDir);
+  await assertOutputDirectoryContentIsReplaceable(canonicalOutputPath, outDir);
+}
+
+export async function resolveSafeOutputPath(outDir: string, reportDir: string): Promise<string> {
   const paths = await resolveOutputPolicyPaths(outDir, reportDir);
-
   rejectUnsafeOutputPath(paths);
+  return paths.outputPath;
+}
 
-  const entries = await readDirectoryEntriesIfPresent(paths.outputPath);
+export async function assertOutputDirectoryContentIsReplaceable(canonicalOutputPath: string, displayOutDir: string = canonicalOutputPath): Promise<void> {
+  const entries = await readDirectoryEntriesIfPresent(canonicalOutputPath);
   if (entries.length === 0) return;
 
-  if (await hasBriefkitOwnershipMarker(paths.outputPath)) return;
+  if (await hasBriefkitOwnershipMarker(canonicalOutputPath)) return;
 
-  throw new Error(`Refusing to delete non-empty output directory without Briefkit ownership marker: ${outDir}. See README "Requirements and output ownership" for safe recovery steps.`);
+  throw new Error(`Refusing to delete non-empty output directory without Briefkit ownership marker: ${displayOutDir}. See README "Requirements and output ownership" for safe recovery steps.`);
 }
 
 export async function writeOutputOwnershipMarker(outDir: string): Promise<void> {

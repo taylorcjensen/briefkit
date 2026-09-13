@@ -19,6 +19,7 @@ Briefkit is not an app framework, dashboard backend, CMS, or structured-data pri
 | Mermaid diagrams | Use fenced `mermaid` blocks or the `Mermaid` MDX component |
 | Decision artifacts | Use callouts, dense tables, sidebars, and heading TOCs |
 | Throwaway output | Build static files to `{report-folder}/brief/` |
+| Durable backups | Optionally retain the latest searchable source and built site after `build` or `publish` |
 
 ## Install
 
@@ -66,6 +67,7 @@ briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dar
 briefkit build [report-dir] [--out ./brief] [--color-mode auto|light|dark]
 briefkit publish [report-dir] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY]
 briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
+briefkit config set --backup-dir /path/to/backups
 briefkit publish-config set --target https://briefs.example.com --api-key KEY
 ```
 
@@ -75,6 +77,7 @@ briefkit publish-config set --target https://briefs.example.com --api-key KEY
 | `build` | Saved static artifact | `{report-folder}/brief/` by default |
 | `publish` | Build and upload a static brief | Hosted URL from your publish server |
 | `unpublish` | Delete a hosted brief by URL or slug | Removed static brief |
+| `config` | Save a global backup directory | `~/.config/briefkit/config.json` |
 | `publish-config` | Save a default publish target and API key | `~/.config/briefkit/publish.json` |
 
 `briefkit dev` opens the browser by default. Agent workflows should not open a separate browser tab after running it. Use `--no-open` only when you explicitly do not want a browser opened.
@@ -95,6 +98,38 @@ If you have a legacy Briefkit output directory from before ownership markers wer
 4. After checking the rebuilt site, delete the backup.
 
 If Briefkit refuses to build because an unmarked directory is non-empty, do not add the marker by hand unless you are certain every file in that directory is disposable generated output. The safest recovery is to move the directory aside and rebuild.
+
+## Backing up ephemeral briefs
+
+Configure a global backup directory when report sources normally live in `/tmp` or another disposable location:
+
+```bash
+briefkit config set --backup-dir ~/.local/share/briefkit/backups
+```
+
+After every successful local build, Briefkit stores the current report under the configured directory. Publish creates the backup after the static build succeeds and before uploading it. Each backup contains:
+
+```text
+<backup-directory>/<report-id>/
+  manifest.json
+  source/
+  site/
+```
+
+`source/` is a searchable copy of the report source. Briefkit excludes `.git`, `node_modules`, and the active build output. `site/` contains the built static report. Rebuilding the same report replaces its prior snapshot; Briefkit does not retain version history.
+
+By default, the report ID combines the source directory name with a hash of its canonical path. Give a report a stable explicit ID when its temporary source path may change:
+
+```js
+export default {
+  title: 'Vendor Decision Brief',
+  backup: { id: 'vendor-decision' },
+};
+```
+
+Explicit IDs may contain letters, numbers, dots, underscores, and hyphens. Briefkit refuses to replace a non-empty backup directory unless its `manifest.json` identifies it as the matching Briefkit backup, and it rejects backup destinations that overlap the report source or build output.
+
+Remove the `backup` setting from `~/.config/briefkit/config.json` to disable backups.
 
 ## Publishing briefs
 
