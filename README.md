@@ -66,8 +66,10 @@ npm run briefkit -- build examples/basic-report
 
 ```bash
 briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
-briefkit build [report-dir] [--out ./brief] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+briefkit build [report-dir] [--out ./brief] [--wait-for-response|--serve-responses] [--port 4311] [--no-open] [--color-mode auto|light|dark]
 briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY]
+briefkit responses <slug-or-url> [--target https://briefs.example.com] [--api-key KEY]
+briefkit responses <revision-id> --local
 briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
 briefkit config set --backup-dir /path/to/backups
 briefkit publish-config set --target https://briefs.example.com --api-key KEY
@@ -78,6 +80,7 @@ briefkit publish-config set --target https://briefs.example.com --api-key KEY
 | `dev` | Primary authoring workflow | Live Astro dev server |
 | `build` | Saved static artifact | `{report-folder}/brief/` by default |
 | `publish` | Build and upload a static brief | Hosted URL from your publish server |
+| `responses` | Read saved answers without consuming them | JSON inbox |
 | `unpublish` | Delete a hosted brief by URL or slug | Removed static brief |
 | `config` | Save a global backup directory | `~/.config/briefkit/config.json` |
 | `publish-config` | Save a default publish target and API key | `~/.config/briefkit/publish.json` |
@@ -157,6 +160,7 @@ docker run -d \
   --restart unless-stopped \
   -p 8080:8080 \
   -v /path/on/host/briefs:/briefs \
+  -v /path/on/host/responses:/responses \
   -e BRIEFKIT_DOMAIN=https://briefs.example.com \
   -e BRIEFKIT_API_KEYS=key-one,key-two \
   -e BRIEFKIT_DEFAULT_DURATION=3mo \
@@ -176,6 +180,7 @@ services:
       - "8080:8080"
     volumes:
       - /path/on/host/briefs:/briefs
+      - /path/on/host/responses:/responses
     environment:
       BRIEFKIT_DOMAIN: https://briefs.example.com
       BRIEFKIT_API_KEYS: key-one,key-two
@@ -201,15 +206,17 @@ The GitHub Actions workflow publishes multi-architecture images to `ghcr.io/tayl
 | `BRIEFKIT_API_KEYS` | Yes | none | Comma-separated valid API keys |
 | `BRIEFKIT_DEFAULT_DURATION` | No | `3mo` | Used when the client omits `--duration` |
 | `BRIEFKIT_DEFAULT_INDEXED` | No | `true` | Whether published briefs appear on the homepage when the client does not override indexing |
-| `BRIEFKIT_STORAGE_DIR` | No | `/briefs` | Container storage path |
+| `BRIEFKIT_STORAGE_DIR` | No | `/briefs` | Public static storage path |
+| `BRIEFKIT_RESPONSE_STORAGE_DIR` | No | `/responses` in Docker | Private response storage, outside public storage |
 | `BRIEFKIT_MAX_BODY_BYTES` | No | `52428800` | Maximum JSON upload size |
-| `BRIEFKIT_RESPONSE_DURATION` | No | `1d` | Lifetime of one-shot response channels |
+| `BRIEFKIT_RESPONSE_DURATION` | No | brief duration | Default channel lifetime when created separately from publish |
+| `BRIEFKIT_RESPONSE_CAPTURE_IP` | No | `false` | Store socket peer address with responses (not forwarded headers) |
 | `BRIEFKIT_RESPONSE_WAIT_MS` | No | `25000` | Long-poll window used by waiting publish clients |
 | `BRIEFKIT_MAX_RESPONSE_BYTES` | No | `262144` | Maximum submitted response size |
 
 `BRIEFKIT_API_KEYS` is a comma-separated allowlist. There are no user accounts; use separate keys if you want to track or rotate access by person or machine.
 
-The storage directory should be a bind mount or Docker volume if you want briefs to survive container replacement. The image declares `/briefs`; you decide what host path or volume maps there.
+Both `/briefs` and `/responses` should be persistent bind mounts or Docker volumes. The image declares both volumes; map them to separate host paths so private answers survive container replacement and cannot be served as static briefs.
 
 The server homepage at `/` lists non-expired indexed briefs, sorted newest first. Use `BRIEFKIT_DEFAULT_INDEXED=false` if briefs should be hidden from the homepage unless the client opts in.
 
@@ -617,9 +624,9 @@ briefkit build /path/to/report --wait-for-response
 briefkit publish /path/to/report --wait-for-response
 ```
 
-A waiting local build serves its static output on loopback and opens that URL. A waiting publish creates an expiring, one-shot response channel on the publish server and opens the published URL. The public page receives only the submit credential; the CLI keeps the separate wait credential private.
+A waiting local build serves its static output on loopback and opens that URL. A waiting publish opens the published URL. The public page receives only the submit credential; the CLI keeps the separate wait credential private. Published reports accept multiple responses even after the publishing command exits. See [Response inbox](docs/response-inbox.md) for persistent storage, retrieval, expiry, and local serving.
 
-Without `--wait-for-response` or an explicit `action` prop, the component copies the response JSON to the browser clipboard instead of sending it. Set `action` when the report should post to another JSON webhook. Any token supplied through the component is visible in the generated page, so use only a narrow, disposable submit credential.
+Without `--wait-for-response` or `--serve-responses`, local builds copy the response JSON to the browser clipboard instead of sending it. Published pages have a default response channel even without `--wait-for-response`. Set `action` when the report should post to another JSON webhook. Any token supplied through the component is visible in the generated page, so use only a narrow, disposable submit credential.
 
 ## Data and local imports
 

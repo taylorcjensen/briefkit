@@ -13,6 +13,7 @@ const serverProcesses = new Set<ChildProcessWithoutNullStreams>();
 interface PublishServer {
   origin: string;
   storageDir: string;
+  responseStorageDir: string;
   stop: () => Promise<void>;
 }
 
@@ -148,7 +149,7 @@ test('static serving hides internal paths, excludes unindexed briefs, and cleans
   }
 });
 
-test('response channels separate submit and wait credentials and accept one response', async () => {
+test('response channels separate submit and wait credentials and accept revised responses', async () => {
   const server = await startPublishServer('response-channel');
   const responseBody = {
     schemaVersion: 1,
@@ -197,14 +198,16 @@ test('response channels separate submit and wait credentials and accept one resp
       headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(responseBody),
     });
-    assert.equal(accepted.status, 201, await accepted.text());
+    const acceptedBody = parseJson(await accepted.text());
+    assert.equal(accepted.status, 201);
 
     const duplicate = await fetch(channel.submitUrl, {
       method: 'POST',
       headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
       body: JSON.stringify(responseBody),
     });
-    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.status, 201);
+    assert.notEqual(acceptedBody.submissionId, duplicate.json.submissionId);
 
     const waitResponse = await fetch(channel.waitUrl, {
       headers: { authorization: `Bearer ${channel.waitToken}` },
@@ -217,8 +220,8 @@ test('response channels separate submit and wait credentials and accept one resp
       method: 'DELETE',
       headers: { authorization: `Bearer ${channel.waitToken}` },
     });
-    assert.equal(deleted.status, 200);
-    assert.equal((await fetch(channel.waitUrl, { headers: { authorization: `Bearer ${channel.waitToken}` } })).status, 404);
+    assert.equal(deleted.status, 409);
+    assert.equal((await fetch(channel.waitUrl, { headers: { authorization: `Bearer ${channel.waitToken}` } })).status, 200);
   } finally {
     await server.stop();
   }
@@ -251,7 +254,7 @@ test('response channels reject submissions that finish after expiry', async () =
     });
     assert.equal(createResponse.status, 201);
     const channel = await createResponse.json() as { id: string; submitUrl: string; submitToken: string };
-    const channelDir = path.join(server.storageDir, '.briefkit-responses', channel.id);
+    const channelDir = path.join(server.responseStorageDir, channel.id);
     const channelPath = path.join(channelDir, 'channel.json');
     const channelMetadata = JSON.parse(await fs.readFile(channelPath, 'utf8')) as Record<string, unknown>;
     channelMetadata.expiresAt = new Date(Date.now() + 200).toISOString();
@@ -373,6 +376,29 @@ The report can explain the decision before asking for an answer.
     await new Promise<void>((resolve) => child.once('exit', () => resolve()));
     assert.equal(child.exitCode, 0, stderr);
     assert.deepEqual(JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}'), responseBody);
+    const revised = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.5' },
+      body: JSON.stringify({ ...responseBody, answers: { choice: 'a' } }),
+    });
+    assert.equal(revised.status, 201, await revised.text());
+    const slug = new URL(publishedUrl).pathname.split('/').filter(Boolean)[0];
+    const retrieved = await fetch(`${server.origin}/api/briefs/${slug}/responses`, { headers: { authorization: `Bearer ${apiKey}` } });
+    assert.equal(retrieved.status, 200);
+    const inbox = await retrieved.json() as { total: number; responses: { submissionId: string; revisionId: string; receivedAt: string; submission: typeof responseBody; ip?: string }[] };
+    assert.equal(inbox.total, 2);
+    assert.equal(inbox.responses.length, 2);
+    assert.notEqual(inbox.responses[0].submissionId, inbox.responses[1].submissionId);
+    assert.equal(inbox.responses[0].submission.answers.choice, 'b');
+    assert.equal(inbox.responses[1].submission.answers.choice, 'a');
+    assert.match(inbox.responses[0].receivedAt, /^\d{4}-/);
+    assert.equal(inbox.responses[0].revisionId, inbox.responses[1].revisionId);
+    assert.equal(inbox.responses[1].ip, undefined);
+    assert.equal((await fetch(`${server.origin}/api/briefs/${slug}/responses`)).status, 401);
+    assert.equal((await fetch(`${server.origin}/.briefkit-responses/${inbox.responses[0].revisionId}/submissions/${inbox.responses[0].submissionId}.json`)).status, 404);
+    const cli = await runBriefkit(['responses', slug, '--target', server.origin, '--api-key', apiKey]);
+    assert.equal(cli.exitCode, 0, cli.stderr);
+    assert.equal((JSON.parse(cli.stdout) as { responses: unknown[] }).responses.length, 2);
   } finally {
     if (child.exitCode === null) child.kill('SIGTERM');
     await server.stop();
@@ -564,6 +590,7 @@ function escapeRegExp(value: string): string {
 
 async function startPublishServer(name: string, providedStorageDir?: string, env: Record<string, string> = {}): Promise<PublishServer> {
   const storageDir = providedStorageDir ?? await makeTempDir(`server-storage-${name}`);
+  const responseStorageDir = `${storageDir}-responses`;
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const serverProcess = spawn(process.execPath, [path.join(packageRoot, 'publish-server', 'server.js')], {
@@ -583,6 +610,7 @@ async function startPublishServer(name: string, providedStorageDir?: string, env
   return {
     origin,
     storageDir,
+    responseStorageDir,
     stop: async () => {
       await stopProcess(serverProcess);
     },
@@ -678,3 +706,126 @@ async function publicStorageEntries(storageDir: string): Promise<string[]> {
   const entries = await fs.readdir(storageDir);
   return entries.filter((entry) => !entry.startsWith('.briefkit-')).sort();
 }
+
+test('response records survive same-slug replacement and revision IDs identify submissions, not old pages', async () => {
+  const server = await startPublishServer('response-replacement');
+  const revisions: string[] = [];
+  try {
+    for (const content of ['first', 'replacement']) {
+      const created = await fetch(`${server.origin}/api/response-channels`, {
+        method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: '{}',
+      });
+      assert.equal(created.status, 201);
+      const channel = await created.json() as { id: string; submitUrl: string; submitToken: string; waitUrl: string; waitToken: string };
+      revisions.push(channel.id);
+      const published = await postJson(server.origin, { title: 'Replace Me', responseChannelId: channel.id, files: [textFile('index.html', content)] }, apiKey);
+      assert.equal(published.status, 201, published.text);
+      assert.equal(published.json.slug, 'replace-me');
+      const submitted = await fetch(channel.submitUrl, {
+        method: 'POST', headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ schemaVersion: 1, formId: 'choice', answers: { content }, submittedAt: new Date().toISOString(), pageUrl: `${server.origin}/replace-me/` }),
+      });
+      assert.equal(submitted.status, 201);
+      const attemptedDelete = await fetch(channel.waitUrl, { method: 'DELETE', headers: { authorization: `Bearer ${channel.waitToken}` } });
+      assert.equal(attemptedDelete.status, 409);
+      if (content === 'first') {
+        const deleted = await fetch(`${server.origin}/api/briefs/replace-me`, { method: 'DELETE', headers: { authorization: `Bearer ${apiKey}` } });
+        assert.equal(deleted.status, 200);
+      }
+    }
+    const retrieved = await fetch(`${server.origin}/api/briefs/replace-me/responses`, { headers: { authorization: `Bearer ${apiKey}` } });
+    assert.equal(retrieved.status, 200);
+    const payload = await retrieved.json() as { total: number; responses: { revisionId: string; submission: { answers: { content: string } } }[] };
+    assert.equal(payload.total, 2);
+    assert.deepEqual(payload.responses.map((record) => record.revisionId), revisions);
+    assert.deepEqual(payload.responses.map((record) => record.submission.answers.content), ['first', 'replacement']);
+    assert.equal(await (await fetch(`${server.origin}/replace-me/`)).text(), 'replacement');
+    assert.equal((await fetch(`${server.origin}/api/briefs/replace-me/responses?limit=1&offset=1`, { headers: { authorization: `Bearer ${apiKey}` } })).status, 200);
+    await server.stop();
+    const restarted = await startPublishServer('response-restart', server.storageDir);
+    try {
+      const persisted = await fetch(`${restarted.origin}/api/briefs/replace-me/responses`, { headers: { authorization: `Bearer ${apiKey}` } });
+      assert.equal(persisted.status, 200);
+      assert.equal((await persisted.json() as { total: number }).total, 2);
+    } finally {
+      await restarted.stop();
+    }
+  } finally {
+    await server.stop();
+  }
+});
+
+test('publish without waiting leaves a live response inbox after CLI exit', { timeout: 120_000 }, async () => {
+  const server = await startPublishServer('publish-inbox-no-wait');
+  const reportDir = await makeTempDir('publish-inbox-report');
+  await fs.writeFile(path.join(reportDir, 'index.mdx'), `---
+title: Inbox Report
+---
+import { UserRespond } from 'briefkit';
+
+<UserRespond id="choice" questions={[{ id: 'answer', type: 'text', label: 'Answer' }]} />
+`);
+  try {
+    const published = await runBriefkit(['publish', reportDir, '--target', server.origin, '--api-key', apiKey, '--no-open']);
+    assert.equal(published.exitCode, 0, published.stderr);
+    const url = published.stdout.match(/^URL: (\S+)$/m)?.[1];
+    assert(url, published.stdout);
+    const html = await (await fetch(url)).text();
+    const endpoint = requiredMetaContent(html, 'briefkit-response-endpoint');
+    const token = requiredMetaContent(html, 'briefkit-response-token');
+    const submitted = await fetch(endpoint, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ schemaVersion: 1, formId: 'choice', answers: { answer: 'after exit' }, submittedAt: new Date().toISOString(), pageUrl: url }),
+    });
+    assert.equal(submitted.status, 201, await submitted.text());
+    const retrieved = await runBriefkit(['responses', 'inbox-report', '--target', server.origin, '--api-key', apiKey]);
+    assert.equal(retrieved.exitCode, 0, retrieved.stderr);
+    assert.equal((JSON.parse(retrieved.stdout) as { responses: { submission: { answers: { answer: string } } }[] }).responses[0].submission.answers.answer, 'after exit');
+  } finally {
+    await server.stop();
+  }
+});
+
+
+test('published IP capture uses the direct peer, ignoring client forwarded headers', async () => {
+  const server = await startPublishServer('response-ip', undefined, { BRIEFKIT_RESPONSE_CAPTURE_IP: 'true' });
+  try {
+    const created = await fetch(`${server.origin}/api/response-channels`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: '{}' });
+    const channel = await created.json() as { id: string; submitUrl: string; submitToken: string };
+    const published = await postJson(server.origin, { title: 'IP Report', responseChannelId: channel.id, files: [textFile('index.html', 'Report')] }, apiKey);
+    assert.equal(published.status, 201);
+    const submitted = await fetch(channel.submitUrl, {
+      method: 'POST', headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.5' },
+      body: JSON.stringify({ schemaVersion: 1, formId: 'choice', answers: { yes: true }, submittedAt: new Date().toISOString(), pageUrl: `${server.origin}/ip-report/` }),
+    });
+    assert.equal(submitted.status, 201);
+    const retrieved = await fetch(`${server.origin}/api/briefs/ip-report/responses`, { headers: { authorization: `Bearer ${apiKey}` } });
+    const inbox = await retrieved.json() as { responses: { ip?: string }[] };
+    assert.match(inbox.responses[0].ip ?? '', /^(::ffff:)?127\.0\.0\.1$/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('response pagination and CLI retrieval include more than one page of submissions', async () => {
+  const server = await startPublishServer('response-pagination');
+  try {
+    const created = await fetch(`${server.origin}/api/response-channels`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: '{}' });
+    const channel = await created.json() as { id: string; submitUrl: string; submitToken: string };
+    const published = await postJson(server.origin, { title: 'Many Answers', responseChannelId: channel.id, files: [textFile('index.html', 'Report')] }, apiKey);
+    assert.equal(published.status, 201);
+    const results = await Promise.all(Array.from({ length: 105 }, (_unused, index) => fetch(channel.submitUrl, {
+      method: 'POST', headers: { authorization: `Bearer ${channel.submitToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ schemaVersion: 1, formId: 'choice', answers: { index: String(index) }, submittedAt: new Date().toISOString(), pageUrl: `${server.origin}/many-answers/` }),
+    })));
+    assert(results.every((result) => result.status === 201), results.map((result) => result.status).join(','));
+    const first = await fetch(`${server.origin}/api/briefs/many-answers/responses`, { headers: { authorization: `Bearer ${apiKey}` } });
+    const firstPage = await first.json() as { total: number; responses: unknown[] };
+    assert.equal(firstPage.total, 105);
+    assert.equal(firstPage.responses.length, 100);
+    const cli = await runBriefkit(['responses', 'many-answers', '--target', server.origin, '--api-key', apiKey]);
+    assert.equal(cli.exitCode, 0, cli.stderr);
+    assert.equal((JSON.parse(cli.stdout) as { responses: unknown[] }).responses.length, 105);
+  } finally {
+    await server.stop();
+  }
+});

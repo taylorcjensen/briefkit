@@ -19,6 +19,7 @@ import {
   type RemoteResponseChannel,
 } from './responses.js';
 import type { ColorMode } from './types.js';
+import { readLocalResponses, validResponseId, type StoredResponse } from './responseInbox.js';
 
 interface ParsedArgs {
   command?: string;
@@ -34,6 +35,9 @@ interface ParsedArgs {
   brief?: string;
   backupDir?: string;
   waitForResponse?: boolean;
+  local?: boolean;
+  captureResponseIp?: boolean;
+  serveResponses?: boolean;
 }
 
 interface PublishConfig {
@@ -64,6 +68,11 @@ export async function runCli(argv: string[]): Promise<void> {
     return;
   }
 
+  if (args.command === 'responses') {
+    await listResponsesFromArgs(args);
+    return;
+  }
+
   if (args.command === 'unpublish') {
     await unpublishBriefFromArgs(args);
     return;
@@ -71,6 +80,10 @@ export async function runCli(argv: string[]): Promise<void> {
 
   if (args.command !== 'dev' && args.command !== 'build' && args.command !== 'publish') {
     throw new Error(`Unknown command: ${args.command}`);
+  }
+  if (args.captureResponseIp && args.command !== 'build') throw new Error('--capture-response-ip applies only to local build responses; configure the publish server separately.');
+  if (args.serveResponses && (args.command !== 'build' || args.waitForResponse)) {
+    throw new Error('--serve-responses is supported by build without --wait-for-response.');
   }
   if (args.waitForResponse && args.command === 'dev') {
     throw new Error('--wait-for-response is supported by build and publish.');
@@ -118,6 +131,7 @@ export async function runCli(argv: string[]): Promise<void> {
   let workspaceDir: string | undefined;
   let localResponseWaiter: LocalResponseWaiter | undefined;
   let remoteResponseChannel: RemoteResponseChannel | undefined;
+  let published = false;
   let cleanupStarted: Promise<void> | undefined;
 
   const cleanupOnce = async (): Promise<void> => {
@@ -126,7 +140,7 @@ export async function runCli(argv: string[]): Promise<void> {
         if (localResponseWaiter) await localResponseWaiter.close();
       } finally {
         try {
-          if (remoteResponseChannel) await deleteRemoteResponseChannel(remoteResponseChannel).catch((error) => {
+          if (remoteResponseChannel && !published) await deleteRemoteResponseChannel(remoteResponseChannel).catch((error) => {
             console.warn(`Briefkit warning: could not delete response channel: ${error instanceof Error ? error.message : String(error)}`);
           });
         } finally {
@@ -161,11 +175,11 @@ export async function runCli(argv: string[]): Promise<void> {
     outputLock = await acquireOutputLock(canonicalOutDir, args.command);
     await assertOutputDirectoryContentIsReplaceable(canonicalOutDir, requestedOutDir);
 
-    if (args.waitForResponse && args.command === 'build') {
-      localResponseWaiter = await createLocalResponseWaiter(canonicalOutDir, args.port);
+    if ((args.waitForResponse || args.serveResponses) && args.command === 'build') {
+      localResponseWaiter = await createLocalResponseWaiter(canonicalOutDir, args.port, args.captureResponseIp);
     }
-    if (args.waitForResponse && args.command === 'publish') {
-      remoteResponseChannel = await createRemoteResponseChannel(publishTarget!, publishApiKey!);
+    if (args.command === 'publish') {
+      remoteResponseChannel = await createRemoteResponseChannel(publishTarget!, publishApiKey!, args.duration);
     }
     const responseTarget = localResponseWaiter?.target ?? (remoteResponseChannel
       ? { endpoint: remoteResponseChannel.submitUrl, token: remoteResponseChannel.submitToken }
@@ -187,7 +201,7 @@ export async function runCli(argv: string[]): Promise<void> {
     await ensurePublicFallback(report.reportDir, canonicalOutDir);
     await normalizePortableAssetUrls(canonicalOutDir);
     await writeOutputOwnershipMarker(canonicalOutDir);
-    if (args.waitForResponse) await assertBuiltResponseForm(canonicalOutDir);
+    if (args.waitForResponse || args.serveResponses) await assertBuiltResponseForm(canonicalOutDir);
     const backupPath = backupDirectory
       ? await backupBrief({ report, builtSiteDir: canonicalOutDir, backupDirectory, command: args.command })
       : undefined;
@@ -196,19 +210,20 @@ export async function runCli(argv: string[]): Promise<void> {
       const target = publishTarget!;
       const apiKey = publishApiKey!;
       const files = await collectPublishFiles(canonicalOutDir);
-      const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, indexed: args.indexed, files });
+      const result = await publishBrief({ target, apiKey, title: report.title, duration: args.duration, indexed: args.indexed, files, responseChannelId: remoteResponseChannel?.id });
+      published = true;
       console.log('Briefkit publish complete');
       console.log(`Report: ${report.reportDir}`);
       console.log(`URL: ${result.url}`);
+      console.log(`Responses: briefkit responses ${result.slug} --target ${target} --api-key KEY`);
+      console.log(`Revision ID: ${remoteResponseChannel!.id}`);
       if (backupPath) console.log(`Backup: ${backupPath}`);
       if (result.expiresAt) console.log(`Expires: ${result.expiresAt}`);
       if (result.expiresAt === null) console.log('Expires: never');
-      if (remoteResponseChannel) {
+      if (remoteResponseChannel && args.waitForResponse) {
         if (args.open) openBrowserWithoutFocus(result.url);
         console.log('Waiting for a Briefkit response...');
         printSubmission(await waitForRemoteResponse(remoteResponseChannel));
-        await deleteRemoteResponseChannel(remoteResponseChannel);
-        remoteResponseChannel = undefined;
       }
       return;
     }
@@ -219,9 +234,16 @@ export async function runCli(argv: string[]): Promise<void> {
     if (backupPath) console.log(`Backup: ${backupPath}`);
     if (localResponseWaiter) {
       console.log(`URL: ${localResponseWaiter.pageUrl}`);
+      console.log(`Responses: briefkit responses ${localResponseWaiter.id} --local`);
+      console.log(`Revision ID: ${localResponseWaiter.id}`);
       if (args.open) openBrowserWithoutFocus(localResponseWaiter.pageUrl);
-      console.log('Waiting for a Briefkit response...');
-      printSubmission(await localResponseWaiter.wait());
+      if (args.waitForResponse) {
+        console.log('Waiting for a Briefkit response...');
+        printSubmission(await localResponseWaiter.wait());
+      } else {
+        console.log('Serving responses until interrupted. Submissions remain on disk afterward.');
+        await new Promise<void>(() => {});
+      }
     }
   } finally {
     removeSignalHandlers();
@@ -375,7 +397,7 @@ function parseArgs(args: string[]): ParsedArgs {
 
   let index = 1;
   if ((parsed.command === 'publish-config' || parsed.command === 'config') && args[index] === 'set') index += 1;
-  if (parsed.command === 'unpublish') {
+  if (parsed.command === 'unpublish' || parsed.command === 'responses') {
     parsed.brief = requiredOptionValue(args[index], 'brief');
     index += 1;
   } else if (args[index] && !args[index].startsWith('-')) {
@@ -387,6 +409,21 @@ function parseArgs(args: string[]): ParsedArgs {
     const arg = args[index];
     if (arg === '--no-open') {
       parsed.open = false;
+      index += 1;
+      continue;
+    }
+    if (arg === '--local') {
+      parsed.local = true;
+      index += 1;
+      continue;
+    }
+    if (arg === '--serve-responses') {
+      parsed.serveResponses = true;
+      index += 1;
+      continue;
+    }
+    if (arg === '--capture-response-ip') {
+      parsed.captureResponseIp = true;
       index += 1;
       continue;
     }
@@ -552,6 +589,33 @@ async function collectPublishFilesFromDir(rootDir: string, currentDir: string, f
   }
 }
 
+async function listResponsesFromArgs(args: ParsedArgs): Promise<void> {
+  if (!args.brief) throw new Error('Usage: briefkit responses <slug-or-url> [--target URL --api-key KEY] or briefkit responses <revision-id> --local');
+  if (args.local) {
+    if (!validResponseId(args.brief)) throw new Error('Local responses require the revision ID printed by build.');
+    console.log(JSON.stringify({ revisionId: args.brief, responses: await readLocalResponses(args.brief) }));
+    return;
+  }
+  const publishConfig = await loadPublishConfig();
+  const target = normalizeTarget(args.target ?? publishConfig.target);
+  const apiKey = args.apiKey ?? publishConfig.apiKey;
+  if (!target || !apiKey) throw new Error('Published responses require a target and API key.');
+  const slug = slugFromBriefReference(args.brief);
+  const responses: StoredResponse[] = [];
+  while (true) {
+    const url = new URL(`${target}/api/briefs/${encodeURIComponent(slug)}/responses`);
+    url.searchParams.set('offset', String(responses.length));
+    const result = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` } });
+    const body = await result.json().catch(() => ({})) as { error?: string; total?: number; responses?: StoredResponse[] };
+    if (!result.ok) throw new Error(body.error ?? `Could not retrieve responses: HTTP ${result.status}`);
+    if (!Array.isArray(body.responses) || typeof body.total !== 'number') throw new Error('Publish server returned invalid responses.');
+    responses.push(...body.responses);
+    if (responses.length >= body.total) break;
+    if (!body.responses.length) throw new Error('Publish server returned an incomplete response page.');
+  }
+  console.log(JSON.stringify({ slug, responses }));
+}
+
 async function unpublishBriefFromArgs(args: ParsedArgs): Promise<void> {
   const publishConfig = await loadPublishConfig();
   const target = normalizeTarget(args.target ?? publishConfig.target);
@@ -593,14 +657,14 @@ async function unpublishBrief(input: { target: string; apiKey: string; slug: str
   return { deleted: true, slug: payload.slug };
 }
 
-async function publishBrief(input: { target: string; apiKey: string; title: string; duration?: string; indexed?: boolean; files: PublishFile[] }): Promise<{ url: string; slug: string; expiresAt: string | null }> {
+async function publishBrief(input: { target: string; apiKey: string; title: string; duration?: string; indexed?: boolean; files: PublishFile[]; responseChannelId?: string }): Promise<{ url: string; slug: string; expiresAt: string | null }> {
   const response = await fetch(`${input.target}/api/publish`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${input.apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ title: input.title, duration: input.duration, indexed: input.indexed, files: input.files }),
+    body: JSON.stringify({ title: input.title, duration: input.duration, indexed: input.indexed, files: input.files, responseChannelId: input.responseChannelId }),
   });
   const payload = await response.json().catch(() => ({})) as { error?: string; url?: string; slug?: string; expiresAt?: string | null };
   if (!response.ok) throw new Error(payload.error ?? `Publish failed with HTTP ${response.status}`);
@@ -613,8 +677,10 @@ function printHelp(): void {
 
 Usage:
   briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
-  briefkit build [report-dir] [--out ./brief] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+  briefkit build [report-dir] [--out ./brief] [--wait-for-response|--serve-responses] [--port 4311] [--no-open] [--color-mode auto|light|dark]
   briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
+  briefkit responses <slug-or-url> [--target URL --api-key KEY]
+  briefkit responses <revision-id> --local
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
   briefkit config set --backup-dir /path/to/backups
   briefkit publish-config set --target https://briefs.example.com --api-key KEY

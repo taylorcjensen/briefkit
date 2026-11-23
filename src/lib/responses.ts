@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
+import { localResponseRoot, saveLocalResponse } from './responseInbox.js';
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const LOCAL_SERVER_CLOSE_GRACE_MS = 250;
@@ -22,6 +23,7 @@ export interface ResponseTarget {
 
 export interface LocalResponseWaiter {
   pageUrl: string;
+  id: string;
   target: ResponseTarget;
   wait: () => Promise<BriefkitSubmission>;
   close: () => Promise<void>;
@@ -33,15 +35,19 @@ export interface RemoteResponseChannel {
   submitToken: string;
   waitUrl: string;
   waitToken: string;
-  expiresAt: string;
+  expiresAt: string | null;
 }
 
-export async function createLocalResponseWaiter(outDir: string, requestedPort?: number): Promise<LocalResponseWaiter> {
+export async function createLocalResponseWaiter(outDir: string, requestedPort?: number, captureIp = false): Promise<LocalResponseWaiter> {
+  const root = path.resolve(outDir);
+  const privateRoot = path.resolve(localResponseRoot());
+  if (privateRoot === root || privateRoot.startsWith(`${root}${path.sep}`)) {
+    throw new Error('Local response storage must be outside the built site.');
+  }
   const channelId = crypto.randomBytes(16).toString('hex');
   const token = crypto.randomBytes(32).toString('base64url');
   const submitPath = `/__briefkit/responses/${channelId}`;
   let receivedSubmission: BriefkitSubmission | undefined;
-  let isSubmissionPending = false;
   let resolveSubmission: ((submission: BriefkitSubmission) => void) | undefined;
   const submissionPromise = new Promise<BriefkitSubmission>((resolve) => { resolveSubmission = resolve; });
   const activeSockets = new Set<Socket>();
@@ -54,19 +60,13 @@ export async function createLocalResponseWaiter(outDir: string, requestedPort?: 
           sendJson(response, 401, { error: 'Unauthorized' });
           return;
         }
-        if (receivedSubmission || isSubmissionPending) {
-          sendJson(response, 409, { error: 'A response has already been submitted' });
-          return;
+        const submission = parseSubmission(await readRequestBody(request, MAX_RESPONSE_BYTES));
+        const record = await saveLocalResponse(channelId, submission, captureIp ? request.socket.remoteAddress : undefined);
+        sendJson(response, 201, { accepted: true, submissionId: record.submissionId });
+        if (!receivedSubmission) {
+          receivedSubmission = submission;
+          resolveSubmission?.(submission);
         }
-        isSubmissionPending = true;
-        try {
-          receivedSubmission = parseSubmission(await readRequestBody(request, MAX_RESPONSE_BYTES));
-        } catch (error) {
-          isSubmissionPending = false;
-          throw error;
-        }
-        sendJson(response, 201, { accepted: true });
-        resolveSubmission?.(receivedSubmission);
         return;
       }
       await serveBuiltFile(request, response, outDir);
@@ -102,6 +102,7 @@ export async function createLocalResponseWaiter(outDir: string, requestedPort?: 
 
   return {
     pageUrl: `${origin}/`,
+    id: channelId,
     target: { endpoint: `${origin}${submitPath}`, token },
     wait: () => submissionPromise,
     close: async () => {
@@ -110,18 +111,18 @@ export async function createLocalResponseWaiter(outDir: string, requestedPort?: 
   };
 }
 
-export async function createRemoteResponseChannel(target: string, apiKey: string): Promise<RemoteResponseChannel> {
+export async function createRemoteResponseChannel(target: string, apiKey: string, duration?: string): Promise<RemoteResponseChannel> {
   const response = await fetch(`${target}/api/response-channels`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify(duration ? { duration } : {}),
   });
   const payload = await response.json().catch(() => ({})) as Partial<RemoteResponseChannel> & { error?: string };
   if (!response.ok) throw new Error(payload.error ?? `Could not create response channel: HTTP ${response.status}`);
-  if (!payload.id || !payload.submitUrl || !payload.submitToken || !payload.waitUrl || !payload.waitToken || !payload.expiresAt) {
+  if (!payload.id || !payload.submitUrl || !payload.submitToken || !payload.waitUrl || !payload.waitToken || payload.expiresAt === undefined) {
     throw new Error('Publish server returned an invalid response channel.');
   }
   return payload as RemoteResponseChannel;

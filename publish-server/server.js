@@ -11,10 +11,14 @@ const defaultIndexed = parseBoolean(process.env.BRIEFKIT_DEFAULT_INDEXED ?? proc
 const port = Number(process.env.PORT || 8080);
 const maxBodyBytes = Number(process.env.BRIEFKIT_MAX_BODY_BYTES || 50 * 1024 * 1024);
 const internalCleanupStaleMs = Number(process.env.BRIEFKIT_INTERNAL_CLEANUP_STALE_MS || 60 * 60 * 1000);
-const responseDuration = process.env.BRIEFKIT_RESPONSE_DURATION || '1d';
+const responseDuration = process.env.BRIEFKIT_RESPONSE_DURATION || defaultDuration;
+const captureResponseIp = parseBoolean(process.env.BRIEFKIT_RESPONSE_CAPTURE_IP || 'false');
 const responseWaitMs = Number(process.env.BRIEFKIT_RESPONSE_WAIT_MS || 25_000);
 const maxResponseBytes = Number(process.env.BRIEFKIT_MAX_RESPONSE_BYTES || 256 * 1024);
-const responseStorageDir = path.join(storageDir, '.briefkit-responses');
+const responseStorageDir = process.env.BRIEFKIT_RESPONSE_STORAGE_DIR || `${path.resolve(storageDir)}-responses`;
+if (path.resolve(responseStorageDir) === path.resolve(storageDir) || path.resolve(responseStorageDir).startsWith(`${path.resolve(storageDir)}${path.sep}`)) {
+  throw new Error('BRIEFKIT_RESPONSE_STORAGE_DIR must be outside the public storage root');
+}
 
 if (apiKeys.size === 0) {
   console.error('BRIEFKIT_API_KEYS is required. Use a comma-separated list for multiple keys.');
@@ -41,6 +45,10 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.url?.startsWith('/api/response-channels/')) {
       await handleResponseChannelRequest(request, response);
+      return;
+    }
+    if (request.method === 'GET' && request.url?.startsWith('/api/briefs/') && request.url.includes('/responses')) {
+      await handleListResponses(request, response);
       return;
     }
     if (request.method === 'DELETE' && request.url?.startsWith('/api/briefs/')) {
@@ -73,7 +81,13 @@ async function handlePublish(request, response) {
   }
 
   const publishRequest = await parsePublishRequest(request);
+  const channel = publishRequest.responseChannelId ? await readResponseChannel(publishRequest.responseChannelId) : undefined;
+  if (publishRequest.responseChannelId && (!channel || channel.slug || isExpired(channel.expiresAt))) throw new HttpError(400, 'Invalid response channel');
   const slug = await publishStagedBrief(publishRequest);
+  if (channel) {
+    channel.slug = slug;
+    await fs.writeFile(path.join(responseChannelDir(channel.id), 'channel.json'), JSON.stringify(channel), { mode: 0o600 });
+  }
 
   sendJson(response, 201, { url: `${domain}/${slug}/`, slug, expiresAt: publishRequest.expiresAt });
 }
@@ -89,7 +103,6 @@ async function handleCreateResponseChannel(request, response) {
     ? responseDuration
     : assertString(payload.duration, 'duration');
   const expiresAt = calculateExpiresAt(requestedDuration);
-  if (expiresAt === null) throw new HttpError(400, 'Response channels must expire');
 
   const id = crypto.randomBytes(16).toString('hex');
   const submitToken = crypto.randomBytes(32).toString('base64url');
@@ -130,7 +143,6 @@ async function handleResponseChannelRequest(request, response) {
     return;
   }
   if (isExpired(channel.expiresAt)) {
-    await fs.rm(responseChannelDir(id), { recursive: true, force: true });
     sendJson(response, 410, { error: 'Response channel expired' });
     return;
   }
@@ -157,22 +169,22 @@ async function handleResponseSubmission(request, response, channel) {
   }
   const submission = assertResponseSubmission(parseJsonObject(await readBody(request, maxResponseBytes)));
   if (isExpired(channel.expiresAt)) {
-    await fs.rm(responseChannelDir(channel.id), { recursive: true, force: true });
     sendJson(response, 410, { error: 'Response channel expired' });
     return;
   }
 
-  const responsePath = path.join(responseChannelDir(channel.id), 'response.json');
-  try {
-    await fs.writeFile(responsePath, JSON.stringify(submission), { flag: 'wx', mode: 0o600 });
-  } catch (error) {
-    if (error?.code === 'EEXIST') {
-      sendJson(response, 409, { error: 'A response has already been submitted' });
-      return;
-    }
-    throw error;
-  }
-  sendJson(response, 201, { accepted: true });
+  const record = {
+    submissionId: crypto.randomBytes(16).toString('hex'),
+    receivedAt: new Date().toISOString(),
+    revisionId: channel.id,
+    ...(channel.slug ? { slug: channel.slug } : {}),
+    submission,
+    ...(captureResponseIp ? { ip: request.socket.remoteAddress } : {}),
+  };
+  const submissionsDir = path.join(responseChannelDir(channel.id), 'submissions');
+  await fs.mkdir(submissionsDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(path.join(submissionsDir, `${record.submissionId}.json`), JSON.stringify(record), { flag: 'wx', mode: 0o600 });
+  sendJson(response, 201, { accepted: true, submissionId: record.submissionId });
 }
 
 async function handleResponseWait(request, response, channel) {
@@ -194,6 +206,9 @@ async function handleResponseChannelDelete(request, response, channel) {
     sendJson(response, 401, { error: 'Unauthorized' });
     return;
   }
+  if (channel.slug || (await readChannelResponses(channel.id)).length) {
+    throw new HttpError(409, 'Stored responses cannot be deleted through a response channel');
+  }
   await fs.rm(responseChannelDir(channel.id), { recursive: true, force: true });
   sendJson(response, 200, { deleted: true, id: channel.id });
 }
@@ -202,12 +217,53 @@ async function waitForStoredSubmission(channel) {
   const deadline = Date.now() + responseWaitMs;
   while (Date.now() < deadline) {
     if (isExpired(channel.expiresAt)) return undefined;
-    const submission = await readJsonOrUndefined(path.join(responseChannelDir(channel.id), 'response.json'));
-    if (isExpired(channel.expiresAt)) return undefined;
-    if (submission) return submission;
+    const records = await readChannelResponses(channel.id);
+    if (records.length) return records[0].submission;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return undefined;
+}
+
+async function readChannelResponses(id) {
+  const directory = path.join(responseChannelDir(id), 'submissions');
+  const entries = await fs.readdir(directory).catch((error) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const records = [];
+  for (const entry of entries) {
+    if (!/^[a-f0-9]{32}\.json$/.test(entry)) continue;
+    const record = await readJsonOrUndefined(path.join(directory, entry));
+    if (record) records.push(record);
+  }
+  return records.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.submissionId.localeCompare(b.submissionId));
+}
+
+async function handleListResponses(request, response) {
+  if (!isAuthorized(request)) throw new HttpError(401, 'Unauthorized');
+  const url = new URL(request.url || '/', domain);
+  const match = /^\/api\/briefs\/([^/]+)\/responses$/.exec(url.pathname);
+  if (!match) throw new HttpError(404, 'Not found');
+  const slug = sanitizeSlug(match[1]);
+  const limit = parsePageNumber(url.searchParams.get('limit'), 100, 1, 500);
+  const offset = parsePageNumber(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+  const entries = await fs.readdir(responseStorageDir, { withFileTypes: true });
+  const records = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue;
+    const channel = await readResponseChannel(entry.name);
+    if (channel?.slug === slug) records.push(...await readChannelResponses(entry.name));
+  }
+  records.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.submissionId.localeCompare(b.submissionId));
+  response.setHeader('cache-control', 'no-store');
+  sendJson(response, 200, { slug, total: records.length, responses: records.slice(offset, offset + limit) });
+}
+
+function parsePageNumber(value, fallback, min, max) {
+  if (value === null) return fallback;
+  const number = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(number) || number < min || number > max) throw new HttpError(400, 'Invalid pagination parameter');
+  return number;
 }
 
 function assertResponseSubmission(payload) {
@@ -239,7 +295,8 @@ async function parsePublishRequest(request) {
   const expiresAt = calculateExpiresAt(requestedDuration);
   const indexed = payload.indexed === undefined || payload.indexed === null ? defaultIndexed : assertBoolean(payload.indexed, 'indexed');
   const files = assertFiles(payload.files);
-  return { title, requestedDuration, expiresAt, indexed, files };
+  const responseChannelId = payload.responseChannelId === undefined ? undefined : sanitizeResponseChannelId(payload.responseChannelId);
+  return { title, requestedDuration, expiresAt, indexed, files, responseChannelId };
 }
 
 async function publishStagedBrief(publishRequest) {
@@ -523,7 +580,7 @@ async function cleanupExpiredResponseChannels() {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const channel = await readResponseChannel(entry.name);
-    if (!channel || isExpired(channel.expiresAt)) {
+    if (!channel || (isExpired(channel.expiresAt) && (await readChannelResponses(entry.name)).length === 0)) {
       await fs.rm(path.join(responseStorageDir, entry.name), { recursive: true, force: true });
     }
   }
@@ -547,7 +604,7 @@ async function readMetadata(briefDir) {
 
 async function readResponseChannel(id) {
   const channel = await readJsonOrUndefined(path.join(responseChannelDir(id), 'channel.json'));
-  if (!channel || channel.id !== id || typeof channel.expiresAt !== 'string') return undefined;
+  if (!channel || channel.id !== id || (channel.expiresAt !== null && typeof channel.expiresAt !== 'string')) return undefined;
   if (!isTokenHash(channel.submitTokenHash) || !isTokenHash(channel.waitTokenHash)) return undefined;
   return channel;
 }
