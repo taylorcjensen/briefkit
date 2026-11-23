@@ -9,16 +9,11 @@ export function initFootnotePreviews(root = document) {
     const sup = reference.parentElement;
     if (!href || !sup || sup.tagName !== 'SUP' || sup.classList.contains('bk-footnote-tooltip')) continue;
 
-    let target;
-    try {
-      target = new URL(href, document.baseURI);
-    } catch {
-      continue;
-    }
-    if (!target.hash || target.origin !== location.origin || target.pathname !== location.pathname || target.search !== location.search) continue;
+    // Generated footnote references point to a fragment of this document.
+    if (!href.startsWith('#')) continue;
     let id;
     try {
-      id = decodeURIComponent(target.hash.slice(1));
+      id = decodeURIComponent(href.slice(1));
     } catch {
       continue;
     }

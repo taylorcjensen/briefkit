@@ -1,6 +1,6 @@
 {
   "name": "briefkit",
-  "version": "0.1.11",
+  "version": "0.2.0",
   "description": "Static Markdown/MDX report-site toolkit for fast agent-authored briefs.",
   "keywords": [
     "agent",
@@ -30,7 +30,7 @@
   "files": [
     "bin",
     "src",
-    "docs/recharts.md",
+    "docs/*.md",
     "skills",
     "publish-server",
     "README.md"

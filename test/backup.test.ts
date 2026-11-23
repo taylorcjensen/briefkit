@@ -91,6 +91,10 @@ test('publish creates a backup before uploading the built site', async () => {
     request.resume();
     request.on('end', () => {
       response.setHeader('content-type', 'application/json');
+      if (request.url === '/api/response-channels') {
+        response.end(JSON.stringify({ id: 'test', submitUrl: '/submit', submitToken: 'submit', waitUrl: '/wait', waitToken: 'wait', expiresAt: null }));
+        return;
+      }
       response.end(JSON.stringify({ url: 'http://127.0.0.1/published-report', slug: 'published-report', expiresAt: null }));
     });
   });

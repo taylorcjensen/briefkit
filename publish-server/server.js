@@ -28,6 +28,11 @@ if (apiKeys.size === 0) {
 
 await fs.mkdir(storageDir, { recursive: true });
 await fs.mkdir(responseStorageDir, { recursive: true, mode: 0o700 });
+const publicRoot = await fs.realpath(storageDir);
+const inboxRoot = await fs.realpath(responseStorageDir);
+if ([path.relative(publicRoot, inboxRoot), path.relative(inboxRoot, publicRoot)].some((relative) => relative === '' || !(relative === '..' || relative.startsWith(`..${path.sep}`)))) {
+  throw new Error('Public and private storage directories must not overlap');
+}
 await cleanupInternalStorageEntries();
 await recoverInterruptedReplacements(storageDir);
 await cleanupExpiredBriefs();
@@ -566,9 +571,9 @@ async function removeInternalEntryQuietly(entryPath) {
 async function cleanupExpiredResponseChannels() {
   const entries = await fs.readdir(responseStorageDir, { withFileTypes: true });
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue;
     const channel = await readResponseChannel(entry.name);
-    if (!channel || (isExpired(channel.expiresAt) && (await readChannelResponses(entry.name)).length === 0)) {
+    if (channel && isExpired(channel.expiresAt) && (await readChannelResponses(entry.name)).length === 0) {
       await fs.rm(path.join(responseStorageDir, entry.name), { recursive: true, force: true });
     }
   }

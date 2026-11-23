@@ -19,6 +19,9 @@ interface RewriteResult {
 
 const URL_ATTRIBUTES = new Set([
   'action',
+  'component-url',
+  'renderer-url',
+  'before-hydration-url',
   'archive',
   'background',
   'cite',

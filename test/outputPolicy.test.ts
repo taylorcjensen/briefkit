@@ -149,6 +149,10 @@ test('publish omits the local output ownership marker from uploaded files', asyn
     const chunks: Buffer[] = [];
     request.on('data', (chunk: Buffer) => chunks.push(chunk));
     request.on('end', () => {
+      if (request.url === '/api/response-channels') {
+        response.end(JSON.stringify({ id: 'test', submitUrl: '/submit', submitToken: 'submit', waitUrl: '/wait', waitToken: 'wait', expiresAt: null }));
+        return;
+      }
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { files: Array<{ path: string }> };
       capturedFiles.push(...payload.files.map((file) => file.path));
       response.setHeader('content-type', 'application/json');

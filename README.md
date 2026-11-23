@@ -164,7 +164,7 @@ Published URLs use the configured public domain and the report title slug:
 {configured-domain}/{article-title-slug}/
 ```
 
-Duplicate titles receive numeric suffixes: `article-title-slug-2`, `article-title-slug-3`, and so on.
+Republishing with the same title and publisher key replaces the brief in place. A different publisher using that title receives a suffix: `article-title-slug-2`, `article-title-slug-3`, and so on.
 
 ### Run the publish server
 

@@ -9,7 +9,7 @@ export function publisherFingerprint(apiKey) {
 
 export async function exposePublishedBrief({ storageDir, stagingDir, baseSlug, metadata, fingerprint }) {
   // A global allocation lock also protects suffixes that collide with another title's base slug.
-  const releaseAllocation = await lockDirectory(storageDir, '.briefkit-lock-global');
+  const releaseAllocation = await lockDirectory(storageDir, '.briefkit-lock-allocation.global');
   try {
     return await withTitleLock(storageDir, baseSlug, async () => {
       const { slug, replacing } = await assignedSlug(storageDir, baseSlug, fingerprint);
@@ -40,7 +40,7 @@ async function assignedSlug(storageDir, baseSlug, fingerprint) {
   let unowned = false;
   // Examine every assignment, including ones beyond a gap left by an unpublished brief.
   const entries = await fs.readdir(storageDir);
-  const candidates = entries.filter((entry) => entry === baseSlug || (entry.startsWith(`${baseSlug}-`) && /^[2-9][0-9]*$/.test(entry.slice(baseSlug.length + 1))));
+  const candidates = entries.filter((entry) => entry === baseSlug || (entry.startsWith(`${baseSlug}-`) && /^(?:[2-9]|[1-9][0-9]+)$/.test(entry.slice(baseSlug.length + 1))));
   for (const slug of candidates) {
     const stat = await fs.lstat(path.join(storageDir, slug));
     const record = stat.isDirectory() ? await readMetadata(path.join(storageDir, slug)) : undefined;

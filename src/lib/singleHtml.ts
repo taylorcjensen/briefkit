@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build as astroBuild } from 'astro';
+import islandRuntime from 'astro/runtime/server/astro-island.prebuilt.js';
 import { build as bundleJs } from 'esbuild';
 import * as parse5 from 'parse5';
 import postcss from 'postcss';
@@ -127,8 +128,45 @@ async function inlineHtml(site: string, htmlFile: string): Promise<string> {
   const root = await fs.realpath(site);
   const context = { root, diagrams: false };
   context.diagrams = hasDiagram(document);
+  await embedChartIslands(document, htmlFile, root);
   await inlineNode(document, htmlFile, context);
   return parse5.serialize(document);
+}
+
+// Bundle the renderer and all charts in one module so their React singleton is shared.
+// A single import-map entry keeps the bundle in the file once, even with several charts.
+async function embedChartIslands(document: Node, base: string, root: string): Promise<void> {
+  const elements: Element[] = [];
+  function visit(node: Node) {
+    if (isElement(node)) elements.push(node);
+    if ('childNodes' in node) node.childNodes.forEach(visit);
+  }
+  visit(document);
+  const islands = elements.filter((el) => el.tagName === 'astro-island');
+  if (!islands.length) return;
+  const imports = [];
+  let renderer: string | undefined;
+  for (const [i, el] of islands.entries()) {
+    const file = getAttr(el, 'component-url') ?? '';
+    const runtime = getAttr(el, 'renderer-url') ?? '';
+    if (!/\.recharts-\d+\.[^/]+\.js$/.test(file) || getAttr(el, 'component-export') !== 'default' || getAttr(el, 'client') !== 'only' || getAttr(el, 'before-hydration-url') || !runtime || (renderer && renderer !== runtime)) {
+      throw new Error('--single-html supports only Briefkit Recharts islands.');
+    }
+    renderer = runtime;
+    imports.push(`export { default as Chart${i} } from ${JSON.stringify(await resolveAsset(file, base, root))};`);
+    setAttr(el, 'component-url', 'briefkit-offline-charts');
+    setAttr(el, 'component-export', `Chart${i}`);
+    setAttr(el, 'renderer-url', 'briefkit-offline-charts');
+  }
+  imports.push(`export { default } from ${JSON.stringify(await resolveAsset(renderer!, base, root))};`);
+  const bundle = await bundleJs({ stdin: { contents: imports.join('\n'), resolveDir: root }, bundle: true, write: false, minify: true, format: 'esm', platform: 'browser' });
+  const code = bundle.outputFiles[0].text;
+  if (bundle.outputFiles.length !== 1 || /\bimport\.meta\b|(?:^|[^.\w])(?:fetch|Worker|SharedWorker)\s*\(|\bnew\s+URL\s*\(|\bimport\s*\(/.test(code)) throw new Error('--single-html cannot embed a chart with external runtime dependencies.');
+  const data = 'data:text/javascript;base64,' + Buffer.from(code).toString('base64');
+  const head = elements.find((el) => el.tagName === 'head')!;
+  const script = parse5.parseFragment(`<script type="importmap">${JSON.stringify({ imports: { 'briefkit-offline-charts': data } })}</script>`).childNodes[0];
+  script.parentNode = head;
+  head.childNodes.unshift(script);
 }
 
 function hasDiagram(node: Node): boolean {
@@ -146,7 +184,7 @@ async function inlineNode(node: Node, base: string, context: { root: string; dia
       const src = getAttr(node, 'src');
       if (src !== undefined) setAttr(node, 'src', await localData(src, base, context.root, getAttr(node, 'type') === 'module' ? 'script' : 'classic-script'));
       const mermaid = getAttr(node, 'data-bk-mermaid-url');
-      if (mermaid === undefined && src === undefined && node.childNodes.some((child) => 'value' in child && /(?:^|[^.\w])(?:fetch|Worker|SharedWorker)\s*\(|\bimport\s*\(|\bnew\s+URL\s*\(/.test(child.value))) {
+      if (mermaid === undefined && src === undefined && node.childNodes.some((child) => 'value' in child && child.value.trim() !== islandRuntime.trim() && /(?:^|[^.\w])(?:fetch|Worker|SharedWorker)\s*\(|\bimport\s*\(|\bnew\s+URL\s*\(/.test(child.value))) {
         throw new Error('--single-html does not support inline scripts with runtime fetch, import, worker, or URL dependencies.');
       }
       if (mermaid !== undefined && !context.diagrams) {

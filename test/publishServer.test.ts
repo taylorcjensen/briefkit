@@ -204,7 +204,7 @@ test('response channels separate submit and wait credentials and accept revised 
       body: JSON.stringify(responseBody),
     });
     assert.equal(duplicate.status, 201);
-    assert.notEqual(acceptedBody.submissionId, duplicate.json.submissionId);
+    assert.notEqual(acceptedBody.submissionId, (await duplicate.json() as { submissionId: string }).submissionId);
 
     const waitResponse = await fetch(channel.waitUrl, {
       headers: { authorization: `Bearer ${channel.waitToken}` },
@@ -705,7 +705,7 @@ async function publicStorageEntries(storageDir: string): Promise<string[]> {
 }
 
 test('response records survive same-slug replacement and revision IDs identify submissions, not old pages', async () => {
-  const server = await startPublishServer('response-replacement');
+  const server = await startPublishServer('response-replacement', undefined, { BRIEFKIT_API_KEYS: `${apiKey},other-key` });
   const revisions: string[] = [];
   try {
     for (const content of ['first', 'replacement']) {
@@ -725,11 +725,9 @@ test('response records survive same-slug replacement and revision IDs identify s
       assert.equal(submitted.status, 201);
       const attemptedDelete = await fetch(channel.waitUrl, { method: 'DELETE', headers: { authorization: `Bearer ${channel.waitToken}` } });
       assert.equal(attemptedDelete.status, 409);
-      if (content === 'first') {
-        const deleted = await fetch(`${server.origin}/api/briefs/replace-me`, { method: 'DELETE', headers: { authorization: `Bearer ${apiKey}` } });
-        assert.equal(deleted.status, 200);
-      }
     }
+    const other = await fetch(`${server.origin}/api/briefs/replace-me/responses`, { headers: { authorization: 'Bearer other-key' } });
+    assert.equal((await other.json() as { total: number }).total, 0);
     const retrieved = await fetch(`${server.origin}/api/briefs/replace-me/responses`, { headers: { authorization: `Bearer ${apiKey}` } });
     assert.equal(retrieved.status, 200);
     const payload = await retrieved.json() as { total: number; responses: { revisionId: string; submission: { answers: { content: string } } }[] };

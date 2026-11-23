@@ -67,6 +67,7 @@ export async function syncWorkspace(workspaceDir: string, report: ReportInfo, op
 
     const responseVersion = crypto.createHash('sha256');
     responseVersion.update(JSON.stringify(report.config));
+    if (options.response) responseVersion.update(options.response.token); // Never restore drafts from a prior publication/channel.
     for (const page of report.pages) {
       responseVersion.update(page.file);
       responseVersion.update(await fs.readFile(page.absolutePath));
