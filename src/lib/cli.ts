@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { build, dev } from 'astro';
 import { backupBrief, loadBackupDirectory, saveBackupDirectory } from './backup.js';
 import { loadReport } from './report.js';
+import { checkReport, printDiagnostics } from './diagnostics.js';
 import { assertOutputDirectoryContentIsReplaceable, isOutputOwnershipMarker, resolveSafeOutputPath, writeOutputOwnershipMarker } from './outputPolicy.js';
 import { acquireOutputLock, type OutputLock } from './outputLock.js';
 import { cleanupWorkspace, createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
@@ -69,7 +70,7 @@ export async function runCli(argv: string[]): Promise<void> {
     return;
   }
 
-  if (args.command !== 'dev' && args.command !== 'build' && args.command !== 'publish') {
+  if (args.command !== 'dev' && args.command !== 'build' && args.command !== 'publish' && args.command !== 'check') {
     throw new Error(`Unknown command: ${args.command}`);
   }
   if (args.waitForResponse && args.command === 'dev') {
@@ -77,6 +78,14 @@ export async function runCli(argv: string[]): Promise<void> {
   }
 
   const report = await loadReport(args.reportDir);
+  if (args.command === 'check') {
+    printDiagnostics(await checkReport(report));
+    return;
+  }
+  if (args.command === 'build') {
+    const diagnostics = await checkReport(report);
+    if (diagnostics.length) printDiagnostics(diagnostics);
+  }
   const publishConfig = args.command === 'publish' ? await loadPublishConfig() : undefined;
   const publishTarget = args.command === 'publish' ? normalizeTarget(args.target ?? publishConfig?.target) : undefined;
   const publishApiKey = args.command === 'publish' ? args.apiKey ?? publishConfig?.apiKey : undefined;
@@ -614,6 +623,7 @@ function printHelp(): void {
 Usage:
   briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
   briefkit build [report-dir] [--out ./brief] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+  briefkit check [report-dir]
   briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
   briefkit config set --backup-dir /path/to/backups

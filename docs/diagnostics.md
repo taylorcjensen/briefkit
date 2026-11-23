@@ -1,0 +1,5 @@
+# Offline report diagnostics
+
+Run `briefkit check /path/to/report` to scan report pages without compiling, fetching URLs, or writing build output. It exits successfully even when it finds warnings. `briefkit build` runs the same scan automatically before compiling; warnings do not prevent a successful build, but compiler errors still fail it.
+
+Warnings include the source file and line when available. The scan checks Markdown/MDX links to local pages and files, local anchors, image assets, undefined footnote references, explicit `TODO`/`TBD`/`FIXME` or bracketed placeholder tokens, and missing files imported from `@report/data/`. It ignores fenced and indented code, frontmatter, inline code, and external URLs. A local asset may live beside its source page or under `public/`; links to pages may use their source filename or rendered route. This is a source-level check, not a full MDX compiler or rendered-site crawler: dynamic expressions, generated anchors, reference-style links, and runtime asset paths are not resolved. If a warning refers to a generated or dynamic target, inspect it manually.
