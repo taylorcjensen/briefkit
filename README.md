@@ -643,6 +643,8 @@ import CustomMatrix from '@report/components/CustomMatrix.astro';
 import facts from '@report/data/facts.yaml';
 ```
 
+For native Recharts/React charts authored inside MDX, with selective build-time CSV/JSON/YAML imports, see [Recharts in MDX](docs/recharts.md).
+
 ## Recommended report sections
 
 Use only the sections that fit the task.

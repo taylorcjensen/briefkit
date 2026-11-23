@@ -8,7 +8,7 @@ import type { ReportInfo } from '../src/lib/types.ts';
 import { makeBasicReport, makeTempDir } from './helpers/process.ts';
 
 const require = createRequire(import.meta.url);
-const workspaceDependencies = ['astro', '@astrojs/mdx', '@astrojs/markdown-remark', 'yaml'] as const;
+const workspaceDependencies = ['astro', '@astrojs/mdx', '@astrojs/markdown-remark', '@astrojs/react', 'react', 'react-dom', 'recharts', 'yaml'] as const;
 
 test('generated workspace links only the direct packages needed by Astro config', async (t) => {
   const tempDir = await makeTempDir('workspace-dependencies');
@@ -20,6 +20,10 @@ test('generated workspace links only the direct packages needed by Astro config'
   const nodeModulesPath = path.join(workspace.dir, 'node_modules');
   const nodeModulesStats = await fs.lstat(nodeModulesPath);
   assert.equal(nodeModulesStats.isSymbolicLink(), false);
+  const manifest = JSON.parse(await fs.readFile(path.join(workspace.dir, 'package.json'), 'utf8'));
+  for (const packageName of ['@astrojs/react', 'react', 'react-dom', 'recharts']) {
+    assert.equal(manifest.dependencies[packageName], require('../package.json').dependencies[packageName]);
+  }
 
   for (const packageName of workspaceDependencies) {
     const linkedPackagePath = path.join(nodeModulesPath, ...packageName.split('/'));

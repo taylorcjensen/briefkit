@@ -31,6 +31,29 @@ test('packed npm prefix install can build a report from the installed CLI', { ti
 
   const html = await fs.readFile(path.join(outDir, 'index.html'), 'utf8');
   assert.match(html, /Briefkit test content/);
+
+  // The published CLI must resolve chart imports from its installed package, not this checkout.
+  await fs.mkdir(path.join(reportDir, 'data'));
+  await fs.writeFile(path.join(reportDir, 'data', 'revenue.csv'), 'month,revenue,private\nJan,12,SECRET-PACKAGED\n');
+  await fs.writeFile(path.join(reportDir, 'index.mdx'), `---
+title: Packaged chart
+---
+\`\`\`recharts
+import { BarChart, Bar } from 'recharts';
+import rows from '@report/data/revenue.csv?pick=month,revenue';
+export default function Chart() { return <BarChart width={300} height={200} data={rows}><Bar dataKey="revenue" /></BarChart>; }
+\`\`\`
+`);
+  await fs.rm(path.join(reportDir, 'index.md'));
+  const chartOut = path.join(projectDir, 'chart-dist');
+  const chartBuild = await runInstalledBriefkit(prefixDir, ['build', reportDir, '--out', chartOut], projectDir);
+  assert.match(chartBuild.stdout, /Briefkit build complete/);
+  const chartHtml = await fs.readFile(path.join(chartOut, 'index.html'), 'utf8');
+  assert.match(chartHtml, /<astro-island[^>]*client="only"/);
+  const assets = path.join(chartOut, '_astro');
+  const scripts = (await Promise.all((await fs.readdir(assets)).filter((entry) => entry.endsWith('.js')).map((entry) => fs.readFile(path.join(assets, entry), 'utf8')))).join('\n');
+  assert.match(scripts, /Jan/);
+  assert.doesNotMatch(scripts, /SECRET-PACKAGED|"private"/);
 });
 
 async function packCurrentPackage(packDir: string): Promise<string> {

@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import matter from 'gray-matter';
 import { calculateTableWidths } from './tableWidths.js';
+import { extractRecharts } from './recharts.js';
 import type { ColorMode, PageInfo, ReportInfo } from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -32,9 +33,11 @@ export async function createWorkspace(report: ReportInfo, options: WorkspaceOpti
 
   try {
     await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
+    const { dependencies } = require(path.join(packageRoot(), 'package.json')) as { dependencies: Record<string, string> };
     await writeJson(path.join(workspaceDir, 'package.json'), {
       type: 'module',
-      dependencies: {},
+      // Astro discovers framework renderers from the workspace manifest during its server build.
+      dependencies: Object.fromEntries(['@astrojs/react', 'react', 'react-dom', 'recharts'].map((name) => [name, dependencies[name]])),
     });
     await linkNodeModules(workspaceDir);
     await fs.writeFile(path.join(workspaceDir, 'astro.config.mjs'), astroConfig(report.reportDir, outDir, workspaceDir, options.site), 'utf8');
@@ -222,6 +225,8 @@ import path from 'node:path';
 import YAML from 'yaml';
 import briefkitTables from ${JSON.stringify(path.join(packageRootPath, 'src', 'lib', 'rehypeTables.ts'))};
 import briefkitMermaid from ${JSON.stringify(path.join(packageRootPath, 'src', 'lib', 'rehypeMermaid.ts'))};
+import { rechartsDataPlugin } from ${JSON.stringify(path.join(packageRootPath, 'src', 'lib', 'recharts.ts'))};
+import react from '@astrojs/react';
 
 function yamlPlugin() {
   return {
@@ -241,9 +246,9 @@ export default defineConfig({
   cacheDir: ${JSON.stringify(cacheDir)},
   devToolbar: { enabled: false },
   markdown: { processor: unified({ rehypePlugins: [briefkitTables, briefkitMermaid] }) },
-  integrations: [mdx()],
+  integrations: [mdx(), react()],
   vite: {
-    plugins: [yamlPlugin()],
+    plugins: [rechartsDataPlugin(), yamlPlugin()],
     resolve: {
       alias: {
         briefkit: ${JSON.stringify(path.join(packageRootPath, 'src', 'index.ts'))},
@@ -278,8 +283,9 @@ async function writeProcessedPage(workspaceDir: string, page: PageInfo, reportTi
   warnIfReportPageStartsWithH1(page, parsed.content);
   const contentWithoutDuplicateTitle = removeDuplicateTitleHeading(parsed.content, [page.title, reportTitle]);
   const normalizedContent = injectHtmlTableColgroups(contentWithoutDuplicateTitle);
-  const processed = `${matter.stringify(normalizedContent, parsed.data).trimEnd()}\n\nexport const briefkitHeadingOrder = ${JSON.stringify(extractHeadingOrder(normalizedContent))};\n`;
   const targetPath = processedPagePath(page, workspaceDir);
+  const chartContent = await extractRecharts(normalizedContent, targetPath);
+  const processed = `${matter.stringify(chartContent, parsed.data).trimEnd()}\n\nexport const briefkitHeadingOrder = ${JSON.stringify(extractHeadingOrder(normalizedContent))};\n`;
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, processed, 'utf8');
 }
@@ -525,7 +531,7 @@ function relativeGeneratedImport(route: string, fileName: string): string {
   return `${'../'.repeat(depth + 1)}generated/${fileName}`;
 }
 
-const WORKSPACE_DEPENDENCIES = ['astro', '@astrojs/mdx', '@astrojs/markdown-remark', 'yaml'] as const;
+const WORKSPACE_DEPENDENCIES = ['astro', '@astrojs/mdx', '@astrojs/markdown-remark', '@astrojs/react', 'react', 'react-dom', 'recharts', 'yaml'] as const;
 
 async function linkNodeModules(workspaceDir: string): Promise<void> {
   await Promise.all(WORKSPACE_DEPENDENCIES.map((packageName) => linkWorkspaceDependency(workspaceDir, packageName)));

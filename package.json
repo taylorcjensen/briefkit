@@ -30,6 +30,7 @@
   "files": [
     "bin",
     "src",
+    "docs/recharts.md",
     "skills",
     "publish-server",
     "README.md"
@@ -45,18 +46,25 @@
   "dependencies": {
     "@astrojs/markdown-remark": "^7.2.1",
     "@astrojs/mdx": "^7.0.2",
+    "@astrojs/react": "7.0.0",
     "astro": "7.2.8",
+    "csv-parse": "7.0.3",
     "gray-matter": "^4.0.3",
     "mermaid": "^11.16.0",
     "parse5": "^8.0.1",
     "postcss": "^8.5.18",
     "postcss-value-parser": "^4.2.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "recharts": "3.10.1",
     "tsx": "^4.20.5",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
     "@types/node": "^25.9.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "typescript": "^5.9.2"
   },
   "engines": {
