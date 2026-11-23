@@ -147,7 +147,7 @@ Lead with the practical answer.
 | B | Deep analysis | More work |
 ```
 
-Use this when speed and portability matter. Use MDX when you need `Callout`, `BriefTable`, `Mermaid`, `Tooltip`, `UserRespond`, imported data, or local components.
+Use this when speed and portability matter. Use MDX when you need `Callout`, `BriefTable`, `ColorTheme`, `Mermaid`, `Tooltip`, `UserRespond`, imported data, or local components.
 
 ## MDX template
 
@@ -291,6 +291,20 @@ Use for jargon, acronyms, products, mods, systems, and ambiguous shorthand.
 ```
 
 Tooltip text should explain practical effect, not just define the term.
+
+### `ColorTheme`
+
+Use for Base16, Base24, or custom color palettes. Import a Tinted Theming YAML file and pass it as `scheme`, or pass a flat color map as `palette`.
+
+```mdx
+import { ColorTheme } from 'briefkit';
+import scheme from '@report/data/theme.yaml';
+
+<ColorTheme scheme={scheme} />
+<ColorTheme palette={{ accent: { name: 'Terracotta', hex: '#C96556' } }} formats={['rgb', 'hsl', 'oklch']} />
+```
+
+Swatches copy hex on click. **Copy hex palette** copies the full labeled hex list as plain text. Each swatch displays its color name, italicized if approximate. Use `{ rgb: [r, g, b], bitDepth: 16 }` for full-range high-precision sRGB. For HDR, explicitly set `space: 'rec2100-pq'` or `'rec2100-hlg'` and supply `fallbackHex` for SDR displays and copying. Without `bitDepth`, RGB channels must be normalized from 0 to 1.
 
 ### `UserRespond`
 

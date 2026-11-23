@@ -4,5 +4,6 @@ export default {
   pages: [
     { file: 'README.md', title: 'README', route: '/' },
     { file: 'docs/design.md', title: 'Design notes', route: '/design/' },
+    { file: 'docs/color-themes.mdx', title: 'Color themes', route: '/color-themes/' },
   ],
 };

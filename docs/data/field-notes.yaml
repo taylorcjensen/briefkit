@@ -1,0 +1,32 @@
+system: base24
+name: Field Notes
+variant: dark
+palette:
+  base00:
+    name: Midnight ink
+    hex: '#17212C'
+  base01: '#202D3B'
+  base02: '#314459'
+  base03: '#65778A'
+  base04: '#9BA8B3'
+  base05: '#D7DBDB'
+  base06: '#EDE8DA'
+  base07: '#F5F0E4'
+  base08:
+    name: Terracotta
+    hex: '#C96556'
+  base09: '#DE9C5B'
+  base0A: '#DFBD71'
+  base0B: '#9CB47D'
+  base0C: '#6EACAB'
+  base0D: '#7BA4CD'
+  base0E: '#AB8ABE'
+  base0F: '#996451'
+  base10: '#111923'
+  base11: '#0B1219'
+  base12: '#F08374'
+  base13: '#F5D686'
+  base14: '#C0D99D'
+  base15: '#90D9D2'
+  base16: '#A5CFFF'
+  base17: '#D0ACE3'

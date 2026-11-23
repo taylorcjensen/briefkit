@@ -17,6 +17,7 @@ Briefkit is not an app framework, dashboard backend, CMS, or structured-data pri
 | Full components | Use `index.mdx` or `pages/*.mdx` |
 | Scannable tables | Markdown tables are automatically styled and width-normalized |
 | Mermaid diagrams | Use fenced `mermaid` blocks or the `Mermaid` MDX component |
+| Color themes | Use `ColorTheme` for Base16, Base24, or custom palettes with click-to-copy swatches |
 | Structured decisions | Put `UserRespond` beside the explanation, then wait for its answers from the CLI |
 | Decision artifacts | Use callouts, dense tables, sidebars, and heading TOCs |
 | Throwaway output | Build static files to `{report-folder}/brief/` |
@@ -425,6 +426,7 @@ Briefkit v0 intentionally keeps the primitive set small.
 | `ReportLayout` | Shared shell used automatically by the CLI |
 | `Callout` | Verdicts, notes, caveats, warnings, source notes |
 | `Tooltip` | Inline explanations for jargon and acronyms |
+| `ColorTheme` | Named swatches for Base16, Base24, and custom palettes |
 | `BriefTable` | Explicit tables with captions, sticky columns, or data rows |
 | `Mermaid` | Flowcharts, sequence diagrams, state diagrams, and other Mermaid visuals |
 | `UserRespond` | Checkboxes, radio choices, dropdowns, short answers, and freeform responses |
@@ -450,6 +452,37 @@ note | tip | info | warning | danger
 ```
 
 Tooltip text should explain practical effect, not merely expand an acronym.
+
+### ColorTheme
+
+Import a [Tinted Theming](https://github.com/tinted-theming/schemes) Base16 or Base24 YAML file directly. The component orders the slots and groups neutrals, accents, and Base24 additions. It also accepts legacy schemes with `base00` and the other slots at the top level.
+
+```mdx
+import { ColorTheme } from 'briefkit';
+import theme from '@report/data/my-theme.yaml';
+
+<ColorTheme scheme={theme} />
+```
+
+For a custom palette, pass an object keyed by color or slot ID. Give a swatch a display name with `name`. Hex is always shown; `formats` picks the additional sRGB readouts (default: `['rgb']`).
+
+```mdx
+<ColorTheme
+  title="Brand colors"
+  formats={['rgb', 'hsl', 'oklch']}
+  palette={{
+    paper: { name: 'Drafting paper', hex: '#FFEFD5' },
+    accent: '#B7410E',
+    ink: { name: 'Deep ink', rgb: [4096, 12288, 24576], bitDepth: 16 },
+    glow: { name: 'Highlight', space: 'rec2100-pq', rgb: [700, 525, 350], bitDepth: 10, fallbackHex: '#EC9B5A' },
+  }}
+/>
+```
+
+- Hex inputs accept `#RGB`, `#RRGGBB`, or six digits without `#`. For `rgb: [r, g, b]`, use normalized channels from 0 to 1, or full-range integer codes with `bitDepth: 8 | 10 | 12 | 16`.
+- `space` defaults to `srgb`. Use `srgb-linear`, `display-p3`, or `rec2020` to retain and display the native channels. Their copy hex is the 8-bit sRGB preview, with out-of-gamut channels clipped.
+- Use `rec2100-pq` or `rec2100-hlg` for HDR. Supply an SDR `fallbackHex` for non-HDR displays and copying. Briefkit embeds a 16-bit HDR PNG for browsers and displays that can show it. Higher bit depth alone is not HDR.
+- Activate a swatch to copy its hex, or choose **Copy hex palette** to copy every hex with its label and slot ID as plain text. Swatch captions include the exact CSS keyword when one exists, or a match from the full [Color Name List](https://github.com/meodai/color-names). Approximate names are italicized. Briefkit ships the dictionary and resolves names locally at build time. Names and readouts for expanded colors refer to the copied preview or fallback; the original channels are shown separately.
 
 ### BriefTable
 

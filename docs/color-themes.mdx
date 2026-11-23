@@ -1,0 +1,43 @@
+---
+title: Color themes
+description: Display Base16, Base24, and custom color palettes with click-to-copy swatches.
+---
+
+import { ColorTheme } from 'briefkit';
+import fieldNotes from '@report/docs/data/field-notes.yaml';
+
+Click a swatch or its hex code to copy that color. **Copy hex palette** gives you the whole list with names and slot IDs, ready to paste into a handoff. Italics mark approximate color names.
+
+## Base24 scheme
+
+<ColorTheme scheme={fieldNotes} />
+
+```mdx
+import { ColorTheme } from 'briefkit';
+import scheme from '@report/data/my-theme.yaml';
+
+<ColorTheme scheme={scheme} />
+```
+
+Tinted Theming YAML works directly, including legacy schemes with top-level slots. Add a custom label by changing a slot from a hex string to an object with `name` and `hex`. A custom `palette` can use any keys.
+
+## Precision, gamut, and HDR
+
+<ColorTheme
+  title="Screen color proofs"
+  formats={['rgb', 'hsl', 'oklch']}
+  palette={{
+    paper: { name: 'Drafting paper', hex: '#FFEFD5' },
+    ink: { name: 'High-precision ink', rgb: [4096, 12288, 24576], bitDepth: 16 },
+    orange: { name: 'Wide-gamut orange', space: 'display-p3', rgb: [1, 0.4, 0] },
+    glow: {
+      name: 'Lantern highlight',
+      space: 'rec2100-pq',
+      bitDepth: 10,
+      rgb: [700, 525, 350],
+      fallbackHex: '#EC9B5A',
+    },
+  }}
+/>
+
+The HDR swatch shows the embedded HDR image on supported browsers and displays. Its copyable hex is the supplied SDR fallback: hex can’t encode HDR. The original channel values are listed separately from the hex, RGB, HSL, and OKLCH readouts.

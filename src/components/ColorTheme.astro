@@ -1,0 +1,297 @@
+---
+import { randomUUID } from 'node:crypto';
+import { prepareColorTheme, type ColorThemeProps } from '../lib/colorTheme.js';
+
+type Props = ColorThemeProps;
+const { title, system, groups } = prepareColorTheme(Astro.props);
+const id = `bk-color-${randomUUID()}`;
+const systemLabel = system === 'base16' ? 'Base16' : system === 'base24' ? 'Base24' : undefined;
+const paletteTitle = title || 'Palette';
+const hexNote = (color: { hdr: boolean; native?: unknown }) => color.hdr ? 'SDR fallback' : color.native ? 'sRGB preview' : '';
+const paletteText = [paletteTitle, ...groups.flatMap(({ colors }) => colors.map(color => {
+  const label = color.slot === undefined ? color.label : `${color.id} · ${color.label}`;
+  const note = hexNote(color);
+  return `${color.hex}  ${label}${note ? ` (${note})` : ''}`;
+}))].join('\n');
+const copyPath = 'M5 5h7v7H5z M9 3V2H2v7h1';
+---
+
+<bk-color-theme class:list={['bk-color-theme', Astro.props.class]} data-bk-system={system}>
+  <header class="bk-color-header">
+    <div class="bk-color-masthead">
+      {systemLabel && <span class="bk-color-system">{systemLabel}</span>}
+      <strong class="bk-color-title">{paletteTitle}</strong>
+    </div>
+    <button type="button" class="bk-color-copy-all" data-copy-palette={paletteText} aria-label={`Copy hex palette: ${paletteTitle}`}>
+      <span class="bk-color-copy-icon" aria-hidden="true"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor"><path d={copyPath} /></svg></span>
+      Copy hex palette
+    </button>
+  </header>
+  {groups.map(({ label, colors }, groupIndex) => (
+    <div class="bk-color-group">
+      {label && <div class="bk-color-group-label" id={`${id}-group-${groupIndex}`}>{label}</div>}
+      <ul class="bk-color-grid" role="list" aria-labelledby={label ? `${id}-group-${groupIndex}` : undefined}>
+        {colors.map(color => (
+          <li class="bk-color-tile">
+            <button
+              type="button"
+              class="bk-color-swatch"
+              data-copy-hex={color.hex}
+              data-hex-label={color.hexLabel}
+              aria-label={`Copy ${color.hexLabel} ${color.hex} for ${color.label}${color.slot === undefined ? '' : ` (${color.id})`}`}
+            >
+              <span class="bk-color-patch" style={`background-color:${color.hex};${color.css ? `background-color:${color.css};` : ''}`} aria-hidden="true">
+                {color.hdrImage && <img class="bk-color-hdr" src={color.hdrImage} alt="" width="1" height="1" />}
+              </span>
+              <span class="bk-color-hex">
+                <span>{color.hex}</span>
+                <span class="bk-color-copy-icon" aria-hidden="true"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor"><path d={copyPath} /></svg></span>
+              </span>
+            </button>
+            <div class="bk-color-info">
+              {color.slot !== undefined && <div class="bk-color-slot">{color.id}</div>}
+              <div class="bk-color-label">{color.label}</div>
+              <div class="bk-color-name">
+                {color.colorName.exact ? color.colorName.value : (
+                  <><i>{color.colorName.value}</i><span class="bk-color-sr"> (approximate)</span></>
+                )}
+              </div>
+            </div>
+            <div class="bk-color-original">
+              {color.native && <dl class="bk-color-values bk-color-native"><dt>{color.native.label}</dt><dd>{color.native.value}</dd></dl>}
+            </div>
+            <div class="bk-color-readouts">
+              {color.values.length > 0 && (
+                <dl class="bk-color-values">
+                  {color.values.map(({ label: format, value }) => <div><dt>{format}</dt><dd>{value}</dd></div>)}
+                </dl>
+              )}
+              {color.native && <div class="bk-color-hex-note">Hex{color.values.length > 0 ? ' & readouts' : ''}: {hexNote(color)}</div>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ))}
+  <div class="bk-color-manual" hidden>
+    <label for={`${id}-manual`}>Clipboard unavailable. Copy this text manually:</label>
+    <textarea id={`${id}-manual`} rows="3" readonly></textarea>
+  </div>
+  <div class="bk-color-status bk-color-sr" role="status"></div>
+</bk-color-theme>
+
+<style is:inline>
+  .bk-color-theme {
+    --bk-color-serif: ui-serif, Georgia, serif;
+    --bk-color-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    display: block;
+    container-type: inline-size;
+    color: var(--bk-ink);
+    margin: 1.25rem 0 1.75rem;
+    border-block-start: 2px solid var(--bk-ink);
+  }
+  .bk-content h2 + .bk-color-theme { margin-top: 0; border-block-start: 0; }
+  .bk-color-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: end;
+    gap: .55rem 1rem;
+    padding: .65rem 0;
+  }
+  .bk-color-masthead { min-width: 0; overflow-wrap: anywhere; }
+  .bk-color-title { display: block; font: 700 1.55rem/1.1 var(--bk-color-serif); }
+  .bk-color-system, .bk-color-group-label {
+    color: var(--bk-muted);
+    font-size: .72rem;
+    font-weight: 750;
+    letter-spacing: .105em;
+    text-transform: uppercase;
+  }
+  .bk-color-system { display: block; margin-bottom: .12rem; }
+  .bk-color-group + .bk-color-group { margin-top: .85rem; }
+  .bk-color-group-label { display: flex; align-items: center; gap: .6rem; margin-bottom: .32rem; }
+  .bk-color-group-label::after { content: ''; flex: 1; border-block-start: 1px solid var(--bk-line); }
+  .bk-color-theme .bk-color-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-block-start: 1px solid var(--bk-line);
+    border-inline-start: 1px solid var(--bk-line);
+  }
+  .bk-color-theme[data-bk-system] .bk-color-grid { grid-template-columns: minmax(0, 1fr); }
+  @container (min-width: 16rem) {
+    .bk-color-theme[data-bk-system] .bk-color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container (min-width: 32rem) {
+    .bk-color-theme[data-bk-system] .bk-color-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+  @container (min-width: 64rem) {
+    .bk-color-theme[data-bk-system] .bk-color-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  }
+  .bk-color-tile {
+    min-width: 0;
+    margin: 0;
+    padding: .45rem;
+    overflow-wrap: anywhere;
+    background: var(--bk-paper);
+    border-inline-end: 1px solid var(--bk-line);
+    border-block-end: 1px solid var(--bk-line);
+    break-inside: avoid;
+  }
+  @media screen {
+    @supports (grid-template-rows: subgrid) {
+      .bk-color-tile { display: grid; grid-template-rows: subgrid; grid-row: span 4; }
+    }
+  }
+  .bk-color-swatch, .bk-color-copy-all {
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .bk-color-swatch {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    text-align: start;
+  }
+  .bk-color-copy-all {
+    display: flex;
+    align-items: center;
+    gap: .38rem;
+    min-block-size: 2.1rem;
+    padding: .25rem .55rem;
+    background: var(--bk-paper);
+    border: 1px solid var(--bk-line);
+    font-size: .75rem;
+    font-weight: 650;
+  }
+  .bk-color-swatch:focus-visible, .bk-color-copy-all:focus-visible, .bk-color-manual textarea:focus-visible {
+    outline: 2px solid var(--bk-accent);
+    outline-offset: 2px;
+  }
+  .bk-color-patch {
+    display: block;
+    position: relative;
+    block-size: clamp(3rem, 7cqi, 4.75rem);
+    outline: 1px solid color-mix(in srgb, var(--bk-ink) 16%, transparent);
+    outline-offset: -1px;
+    print-color-adjust: exact;
+    forced-color-adjust: none;
+  }
+  .bk-color-hdr { display: none; position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  @media screen and (dynamic-range: high) { .bk-color-hdr { display: block; } }
+  .bk-color-hex {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .2rem;
+    padding: .25rem .15rem;
+    border-block-end: 1px solid var(--bk-line);
+    font: 650 .84rem/1.25 var(--bk-color-mono);
+  }
+  .bk-color-copy-icon { display: grid; place-items: center; flex: none; width: 1rem; height: 1rem; color: var(--bk-muted); }
+  .bk-color-copy-icon svg { display: block; width: .9rem; height: .9rem; }
+  @media (hover: hover) {
+    .bk-color-swatch:hover .bk-color-hex, .bk-color-copy-all:hover { background: var(--bk-head); }
+  }
+  .bk-color-theme button[data-copied] .bk-color-copy-icon { color: var(--bk-accent); }
+  .bk-color-theme button[data-copied] .bk-color-copy-icon svg { display: none; }
+  .bk-color-theme button[data-copied] .bk-color-copy-icon::after { content: '✓'; }
+  .bk-color-info { padding: .42rem .15rem 0; }
+  .bk-color-original, .bk-color-readouts { padding-inline: .15rem; }
+  .bk-color-slot { color: var(--bk-muted); font: .7rem/1.25 var(--bk-color-mono); margin-bottom: .14rem; }
+  .bk-color-label { font-size: .86rem; font-weight: 700; line-height: 1.2; }
+  .bk-color-name { margin-top: .13rem; color: var(--bk-muted); font: .86rem/1.2 var(--bk-color-serif); }
+  .bk-color-values { margin: .42rem 0 0; font-size: .73rem; line-height: 1.45; }
+  .bk-color-values > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 .45rem; }
+  .bk-color-native { border-block-start: 1px solid var(--bk-line); padding-block-start: .24rem; }
+  .bk-color-values dt, .bk-color-hex-note { color: var(--bk-muted); }
+  .bk-color-values dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .bk-color-hex-note { margin-top: .28rem; font-size: .72rem; line-height: 1.25; }
+  .bk-color-manual { margin-top: .6rem; font-size: .8rem; }
+  .bk-color-manual textarea {
+    display: block;
+    width: 100%;
+    margin-top: .2rem;
+    padding: .4rem;
+    background: var(--bk-paper);
+    color: var(--bk-ink);
+    border: 1px solid var(--bk-line);
+    font: .8rem/1.4 var(--bk-color-mono);
+  }
+  .bk-color-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  @media print {
+    .bk-color-theme { --bk-paper: white; --bk-ink: black; --bk-muted: #444; --bk-line: #aaa; }
+    .bk-color-header, .bk-color-group-label { break-after: avoid; }
+    .bk-color-theme .bk-color-copy-all, .bk-color-theme .bk-color-copy-icon, .bk-color-manual { display: none; }
+    .bk-color-patch { -webkit-print-color-adjust: exact; }
+  }
+</style>
+
+<script is:inline>
+  (() => {
+    if (customElements.get('bk-color-theme')) return;
+
+    async function copyText(value, button) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch {
+        // A brief opened from disk may not have permission to use the Clipboard API.
+        const field = document.createElement('textarea');
+        field.value = value;
+        field.readOnly = true;
+        field.style.cssText = 'position:fixed;left:0;top:0;opacity:0;pointer-events:none';
+        document.body.append(field);
+        field.select();
+        try { return document.execCommand('copy'); }
+        catch { return false; }
+        finally {
+          field.remove();
+          button.focus({ preventScroll: true });
+        }
+      }
+    }
+
+    customElements.define('bk-color-theme', class extends HTMLElement {
+      constructor() {
+        super();
+        let feedback;
+        let timer;
+        let latest = 0;
+        this.addEventListener('click', async event => {
+          const button = event.target.closest('button[data-copy-hex], button[data-copy-palette]');
+          if (!button || button.closest('bk-color-theme') !== this) return;
+          const request = ++latest;
+          const hex = button.dataset.copyHex;
+          const value = hex ?? button.dataset.copyPalette;
+          const status = this.querySelector('.bk-color-status');
+          const manual = this.querySelector('.bk-color-manual');
+          clearTimeout(timer);
+          feedback?.removeAttribute('data-copied');
+          status.textContent = '';
+          manual.hidden = true;
+          const copied = await copyText(value, button);
+          if (request !== latest) return;
+          if (copied) {
+            feedback = button;
+            button.setAttribute('data-copied', '');
+            status.textContent = hex ? `Copied ${button.dataset.hexLabel}: ${hex}` : 'Copied hex palette.';
+            timer = setTimeout(() => button.removeAttribute('data-copied'), 1800);
+          } else {
+            const field = manual.querySelector('textarea');
+            field.value = value;
+            manual.hidden = false;
+            field.focus();
+            field.select();
+          }
+        });
+      }
+    });
+  })();
+</script>
