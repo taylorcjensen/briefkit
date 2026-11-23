@@ -465,6 +465,16 @@ note | tip | info | warning | danger
 
 Tooltip text should explain practical effect, not merely expand an acronym.
 
+Markdown and MDX footnotes also get automatic previews from their existing definitions; no `Tooltip` or repeated footnote text is needed:
+
+```md
+This claim has a source[^source].
+
+[^source]: See the [original study](https://example.com/study) for the method.
+```
+
+Hover or focus the reference to read the preview and follow its links. On touch, tap once to preview and again to jump to the footnote. The original footnote link and back-reference remain available, including without JavaScript.
+
 ### ColorTheme
 
 Import a [Tinted Theming](https://github.com/tinted-theming/schemes) Base16 or Base24 YAML file directly. The component orders the slots and groups neutrals, accents, and Base24 additions. It also accepts legacy schemes with `base00` and the other slots at the top level.
