@@ -11,6 +11,7 @@ import { acquireOutputLock, type OutputLock } from './outputLock.js';
 import { cleanupWorkspace, createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
 import { normalizePortableAssetUrls } from './portableAssetUrls.js';
 import { buildSingleHtml } from './singleHtml.js';
+import { runTemplatesCli } from './templates.js';
 import {
   createLocalResponseWaiter,
   createRemoteResponseChannel,
@@ -53,6 +54,10 @@ interface PublishFile {
 }
 
 export async function runCli(argv: string[]): Promise<void> {
+  if (argv[2] === 'templates') {
+    await runTemplatesCli(argv.slice(3));
+    return;
+  }
   const args = parseArgs(argv.slice(2));
 
   if (!args.command || args.command === 'help' || args.command === '--help' || args.command === '-h') {
@@ -700,5 +705,9 @@ Usage:
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
   briefkit config set --backup-dir /path/to/backups
   briefkit publish-config set --target https://briefs.example.com --api-key KEY
+  briefkit templates init <name> [--folder]
+  briefkit templates list
+  briefkit templates use <name> [destination]
+  briefkit templates install <local-example-path> [name]
 `);
 }

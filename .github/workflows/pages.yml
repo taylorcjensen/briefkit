@@ -33,6 +33,12 @@ jobs:
       - name: Build README with Briefkit
         run: npm run briefkit -- build . --out ./dist --color-mode auto
 
+      - name: Build browsable examples
+        run: |
+          npm run briefkit -- build examples/comparison --out ./dist/examples/comparison
+          npm run briefkit -- build examples/research --out ./dist/examples/research
+          npm run briefkit -- build examples/audit-status --out ./dist/examples/audit-status
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 

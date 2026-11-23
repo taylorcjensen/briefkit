@@ -51,15 +51,15 @@ npm link
 Then run:
 
 ```bash
-briefkit dev examples/readme-report
-briefkit build examples/basic-report
+briefkit dev examples/comparison
+briefkit build examples/research
 ```
 
 Without linking:
 
 ```bash
-npm run briefkit -- dev examples/readme-report
-npm run briefkit -- build examples/basic-report
+npm run briefkit -- dev examples/comparison
+npm run briefkit -- build examples/research
 ```
 
 ## Commands
@@ -73,6 +73,10 @@ briefkit responses <revision-id> --local
 briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
 briefkit config set --backup-dir /path/to/backups
 briefkit publish-config set --target https://briefs.example.com --api-key KEY
+briefkit templates init <name> [--folder]
+briefkit templates list
+briefkit templates use <name> [destination]
+briefkit templates install <local-example-path> [name]
 ```
 
 | Command | Use it for | Output |
@@ -693,9 +697,33 @@ Use only the sections that fit the task.
 9. Decision rules
 10. Next steps
 
-## Example site
+## Examples and personal templates
 
-This README is the example report. Build it with:
+Browse the source and rendered version of each worked example. The examples are report folders with ordinary Markdown, not privileged built-in templates. The rendered links update when the GitHub Pages release workflow runs; until then, build the source locally.
+
+| Case | Source | Rendered report | What to reuse |
+|---|---|---|---|
+| Format comparison | [Markdown source](https://github.com/taylorcjensen/briefkit/blob/main/examples/comparison/index.md) | [Open report](https://taylorcjensen.github.io/briefkit/examples/comparison/) | Decision rules and fit table |
+| Implementation research | [Markdown source](https://github.com/taylorcjensen/briefkit/blob/main/examples/research/index.md) | [Open report](https://taylorcjensen.github.io/briefkit/examples/research/) | Evidence ledger and unanswered questions |
+| Launch audit/status (fictional) | [Markdown source](https://github.com/taylorcjensen/briefkit/blob/main/examples/audit-status/index.md) | [Open report](https://taylorcjensen.github.io/briefkit/examples/audit-status/) | Gate, risks, and change-of-decision rule |
+
+Personal templates live only in `~/.config/briefkit/templates/`. Briefkit does **not** seed or restore this directory. `init` creates a starter `name.md` (or `name/index.md` with `--folder`); you own and may edit or remove it. `list` reads the directory without creating it. `use` copies a local template to the current directory by default (`name.md` or `name/`), or to an explicit destination path. Destinations must have an existing parent and must not already exist; no overwrite flag exists.
+
+To explicitly install a GitHub example, clone the repository and copy the example into your local templates directory:
+
+```bash
+git clone https://github.com/taylorcjensen/briefkit.git
+briefkit templates install ./briefkit/examples/comparison
+briefkit templates list
+briefkit templates use comparison ./my-comparison
+briefkit dev ./my-comparison
+```
+
+`install` accepts a local `.md` file or a report folder; optionally pass a second argument to rename it. Files and folders use the same template name namespace. No network download or silent synchronization occurs. To update an installed template, edit or remove your local copy and explicitly install again. Templates are copied as-is—replace the example's sample facts and evidence before sharing.
+
+### This README as a report
+
+This README is itself a report. Build it with:
 
 ```bash
 npm run briefkit -- build . --out ./dist
