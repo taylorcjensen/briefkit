@@ -1,5 +1,6 @@
 ---
 import reportCss from '../styles/report.css?raw';
+import footnoteRuntime from '../lib/footnotePreviews.js?raw';
 
 export interface NavPage {
   title: string;
@@ -147,6 +148,7 @@ const mermaidRuntimeUrl = `${assetBase}_briefkit/mermaid/mermaid.esm.min.mjs`;
         buttons.forEach((button) => button.addEventListener('click', () => apply(button.dataset.bkThemeButton)));
       })();
     </script>
+    <script is:inline type="module" set:html={footnoteRuntime}></script>
     <script is:inline type="module" data-bk-mermaid-url={mermaidRuntimeUrl}>
       const runtimeScript = document.currentScript;
       const mermaidUrl = runtimeScript?.dataset.bkMermaidUrl || './_briefkit/mermaid/mermaid.esm.min.mjs';
