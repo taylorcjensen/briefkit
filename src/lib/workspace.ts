@@ -62,8 +62,15 @@ export async function syncWorkspace(workspaceDir: string, report: ReportInfo, op
     await resetGeneratedDir(path.join(stagingDir, 'src', 'pages'));
     await resetGeneratedDir(path.join(stagingDir, 'src', 'processed'));
 
+    const responseVersion = crypto.createHash('sha256');
+    responseVersion.update(JSON.stringify(report.config));
+    for (const page of report.pages) {
+      responseVersion.update(page.file);
+      responseVersion.update(await fs.readFile(page.absolutePath));
+    }
     await writeJson(path.join(stagingDir, 'src', 'generated', 'report-data.json'), {
       reportDir: report.reportDir,
+      responseVersion: responseVersion.digest('hex'),
       title: report.title,
       author: report.config.author,
       buildTime: new Date().toLocaleString(),
@@ -513,6 +520,7 @@ function firstDifferentIndex(left, right) {
   assetBase={relativePageHref(currentPage.route, '/')}
   responseEndpoint={reportData.response?.endpoint}
   responseToken={reportData.response?.token}
+  responseVersion={reportData.responseVersion}
 >
   <Content />
 </ReportLayout>

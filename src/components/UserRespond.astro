@@ -1,4 +1,6 @@
 ---
+import responseClient from '../lib/responseClient.js?raw';
+
 export interface ResponseOption {
   value: string;
   label: string;
@@ -118,6 +120,7 @@ const inputId = (questionId: string, suffix?: string) =>
           class="bk-response-question"
           data-bk-question-id={question.id}
           data-bk-question-type={question.type}
+          data-bk-question-required={question.required ? 'true' : undefined}
         >
           <legend>
             {question.label}
@@ -222,111 +225,4 @@ const inputId = (questionId: string, suffix?: string) =>
   </form>
 </section>
 
-<script is:inline>
-  (() => {
-    function initializeUserRespond(form) {
-      if (!(form instanceof HTMLFormElement) || form.dataset.bkResponseReady === 'true') return;
-      form.dataset.bkResponseReady = 'true';
-
-      const status = form.querySelector('.bk-response-status');
-      const submitButton = form.querySelector('.bk-response-submit');
-      const requiredGroups = [...form.querySelectorAll('[data-bk-required-group]')];
-
-      function updateRequiredGroups() {
-        const groupNames = new Set(requiredGroups.map((input) => input.name));
-        for (const groupName of groupNames) {
-          const inputs = requiredGroups.filter((input) => input.name === groupName);
-          const isMissing = !inputs.some((input) => input.checked);
-          inputs[0]?.setCustomValidity(isMissing ? 'Select at least one option.' : '');
-        }
-      }
-
-      function collectAnswers() {
-        const answers = {};
-        const questions = form.querySelectorAll('[data-bk-question-id]');
-        for (const question of questions) {
-          const questionId = question.dataset.bkQuestionId;
-          const questionType = question.dataset.bkQuestionType;
-          if (!questionId || !questionType) continue;
-
-          if (questionType === 'checkbox') {
-            answers[questionId] = question.querySelector('input[type="checkbox"]')?.checked ?? false;
-            continue;
-          }
-          if (questionType === 'checkboxes') {
-            answers[questionId] = [...question.querySelectorAll('input[type="checkbox"]:checked')]
-              .map((input) => input.value);
-            continue;
-          }
-          if (questionType === 'radio') {
-            answers[questionId] = question.querySelector('input[type="radio"]:checked')?.value ?? '';
-            continue;
-          }
-          answers[questionId] = question.querySelector('input, select, textarea')?.value ?? '';
-        }
-        return answers;
-      }
-
-      async function copySubmission(submission) {
-        const formatted = JSON.stringify(submission, null, 2);
-        await navigator.clipboard.writeText(formatted);
-        if (status) status.textContent = 'No callback is configured. The response JSON was copied to your clipboard.';
-      }
-
-      async function submitResponse(submission) {
-        const defaultAction = document.querySelector('meta[name="briefkit-response-endpoint"]')?.content;
-        const defaultToken = document.querySelector('meta[name="briefkit-response-token"]')?.content;
-        const explicitAction = form.dataset.bkResponseAction;
-        const endpoint = explicitAction || defaultAction;
-        const responseToken = explicitAction ? form.dataset.bkResponseToken : defaultToken;
-
-        if (!endpoint) {
-          await copySubmission(submission);
-          return false;
-        }
-
-        const headers = { 'content-type': 'application/json' };
-        if (responseToken) headers.authorization = `Bearer ${responseToken}`;
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(submission),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.error ?? `Submission failed with HTTP ${response.status}`);
-        form.querySelectorAll('input, select, textarea, button').forEach((control) => { control.disabled = true; });
-        if (status) status.textContent = 'Response submitted. You can return to the chat.';
-        return true;
-      }
-
-      requiredGroups.forEach((input) => input.addEventListener('change', updateRequiredGroups));
-      updateRequiredGroups();
-
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        updateRequiredGroups();
-        if (!form.reportValidity()) return;
-
-        const submission = {
-          schemaVersion: 1,
-          formId: form.dataset.bkResponseId || 'response',
-          answers: collectAnswers(),
-          submittedAt: new Date().toISOString(),
-          pageUrl: window.location.href,
-        };
-
-        if (submitButton) submitButton.disabled = true;
-        if (status) status.textContent = 'Submitting…';
-        try {
-          const submittedToCallback = await submitResponse(submission);
-          if (!submittedToCallback && submitButton) submitButton.disabled = false;
-        } catch (error) {
-          if (submitButton) submitButton.disabled = false;
-          if (status) status.textContent = error instanceof Error ? error.message : 'Submission failed.';
-        }
-      });
-    }
-
-    document.querySelectorAll('[data-bk-response-form]').forEach(initializeUserRespond);
-  })();
-</script>
+<script is:inline set:html={responseClient}></script>

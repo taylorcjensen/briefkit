@@ -181,7 +181,7 @@ async function buildUserRespondHtml(): Promise<string> {
 function makeClientScriptHarness(html: string, options: ClientScriptHarnessOptions = {}): ClientScriptHarness {
   const script = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)]
     .map((match) => match[1] ?? '')
-    .find((source) => source.includes('initializeUserRespond'));
+    .find((source) => source.includes('__briefkitResponseReady'));
   assert(script, 'UserRespond client script missing');
 
   const fetchCalls: FetchCall[] = [];

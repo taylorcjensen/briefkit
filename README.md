@@ -610,6 +610,8 @@ Production must remain available throughout the deployment.
 />
 ```
 
+Questions may be split across multiple `UserRespond` components, including on separate brief pages. Use a distinct question `id` throughout the brief: conflicting ids block submission rather than overwriting an answer. A submit button on any page gathers every form into one `answers` object, checks required questions on all pages, and reports the page to visit if an answer is missing. Selections are saved in browser local storage while navigating, scoped to the brief URL and source version; a successful callback clears the draft. Static clipboard responses can be recopied. A single form keeps its original `formId`; multiple forms use `formId: "brief"` in the same existing response envelope. When using explicit webhooks across forms, configure one consistent action/token pair (or put the action on just one form); conflicting destinations block submission.
+
 Use one of the waiting commands when the caller needs the result:
 
 ```bash

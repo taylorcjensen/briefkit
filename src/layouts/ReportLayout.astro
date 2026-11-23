@@ -26,6 +26,7 @@ export interface Props {
   assetBase?: string;
   responseEndpoint?: string;
   responseToken?: string;
+  responseVersion?: string;
 }
 
 const {
@@ -41,6 +42,7 @@ const {
   assetBase = './',
   responseEndpoint,
   responseToken,
+  responseVersion,
 } = Astro.props;
 
 const footerPrefix = author ? `Made by ${author} with` : 'Made with';
@@ -73,6 +75,8 @@ const mermaidRuntimeUrl = `${assetBase}_briefkit/mermaid/mermaid.esm.min.mjs`;
     {previewImageUrl && <meta name="twitter:image" content={previewImageUrl} />}
     {responseEndpoint && <meta name="briefkit-response-endpoint" content={responseEndpoint} />}
     {responseToken && <meta name="briefkit-response-token" content={responseToken} />}
+    {responseVersion && <meta name="briefkit-response-version" content={responseVersion} />}
+    {responseVersion && <meta name="briefkit-response-pages" content={JSON.stringify(pages.map((page) => page.route))} />}
     <style is:inline set:html={reportCss}></style>
   </head>
   <body>
