@@ -49,6 +49,7 @@
     "@astrojs/react": "7.0.0",
     "astro": "7.2.8",
     "csv-parse": "7.0.3",
+    "esbuild": "^0.28.0",
     "gray-matter": "^4.0.3",
     "mermaid": "^11.16.0",
     "parse5": "^8.0.1",

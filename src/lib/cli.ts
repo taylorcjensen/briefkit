@@ -10,6 +10,7 @@ import { assertOutputDirectoryContentIsReplaceable, isOutputOwnershipMarker, res
 import { acquireOutputLock, type OutputLock } from './outputLock.js';
 import { cleanupWorkspace, createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
 import { normalizePortableAssetUrls } from './portableAssetUrls.js';
+import { buildSingleHtml } from './singleHtml.js';
 import {
   createLocalResponseWaiter,
   createRemoteResponseChannel,
@@ -34,6 +35,7 @@ interface ParsedArgs {
   brief?: string;
   backupDir?: string;
   waitForResponse?: boolean;
+  singleHtml?: boolean;
 }
 
 interface PublishConfig {
@@ -76,7 +78,16 @@ export async function runCli(argv: string[]): Promise<void> {
     throw new Error('--wait-for-response is supported by build and publish.');
   }
 
+  if (args.singleHtml && args.command !== 'build') throw new Error('--single-html is supported only by build.');
+  if (args.singleHtml && args.waitForResponse) throw new Error('--single-html cannot use --wait-for-response: file:// has no response server.');
   const report = await loadReport(args.reportDir);
+  if (args.singleHtml) {
+    const output = await buildSingleHtml(report, args.outDir ?? path.join(report.reportDir, 'brief.html'), args.colorMode);
+    console.log('Briefkit single HTML build complete');
+    console.log(`Report: ${report.reportDir}`);
+    console.log(`Output: ${output}`);
+    return;
+  }
   const publishConfig = args.command === 'publish' ? await loadPublishConfig() : undefined;
   const publishTarget = args.command === 'publish' ? normalizeTarget(args.target ?? publishConfig?.target) : undefined;
   const publishApiKey = args.command === 'publish' ? args.apiKey ?? publishConfig?.apiKey : undefined;
@@ -390,6 +401,11 @@ function parseArgs(args: string[]): ParsedArgs {
       index += 1;
       continue;
     }
+    if (arg === '--single-html') {
+      parsed.singleHtml = true;
+      index += 1;
+      continue;
+    }
     if (arg === '--wait-for-response') {
       parsed.waitForResponse = true;
       index += 1;
@@ -613,7 +629,7 @@ function printHelp(): void {
 
 Usage:
   briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
-  briefkit build [report-dir] [--out ./brief] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+  briefkit build [report-dir] [--out ./brief] [--single-html --out ./brief.html] [--wait-for-response] [--port 4311] [--no-open] [--color-mode auto|light|dark]
   briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
   briefkit unpublish <url-or-slug> [--target https://briefs.example.com] [--api-key KEY]
   briefkit config set --backup-dir /path/to/backups

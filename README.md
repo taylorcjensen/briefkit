@@ -88,6 +88,18 @@ briefkit publish-config set --target https://briefs.example.com --api-key KEY
 
 Build/dev generated Astro workspaces live under the OS temp directory. The report folder only needs to contain your source files and optional build output.
 
+### Single-file offline build
+
+For a one-page brief, opt in to a self-contained HTML file:
+
+```sh
+briefkit build /path/to/report --single-html --out /path/to/brief.html
+```
+
+Without `--out`, this writes `brief.html` in the report directory. Open the file directly with `file://`; no local server is needed. Local images, fonts, CSS, emitted JavaScript, and Mermaid runtime assets are embedded. Existing directory builds and publishing are unchanged. This mode requires exactly one visible page at `/`; it rejects missing or external rendering assets, unsupported asset types, CSS `@import`, linked local pages, and response forms. `--wait-for-response` is not supported offline. External hyperlinks are allowed but need a connection when followed. Client scripts that fetch data at runtime or create workers are not supported. If a configured backup directory is present, this mode does not create a site backup.
+
+Briefkit refuses to replace an existing HTML file unless its adjacent `.briefkit-owner.json` marker matches the previously generated file's content. If you edit the HTML by hand, choose a new output path or move the edited file aside before rebuilding.
+
 ## Requirements and output ownership
 
 Briefkit requires Node.js 22.12 or newer.
