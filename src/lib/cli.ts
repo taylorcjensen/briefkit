@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { build, dev } from 'astro';
 import { backupBrief, loadBackupDirectory, saveBackupDirectory } from './backup.js';
 import { loadReport } from './report.js';
+import { checkReport, printDiagnostics } from './diagnostics.js';
 import { assertOutputDirectoryContentIsReplaceable, isOutputOwnershipMarker, resolveSafeOutputPath, writeOutputOwnershipMarker } from './outputPolicy.js';
 import { acquireOutputLock, type OutputLock } from './outputLock.js';
 import { cleanupWorkspace, createWorkspace, syncWorkspace, type WorkspaceOptions } from './workspace.js';
@@ -85,7 +86,7 @@ export async function runCli(argv: string[]): Promise<void> {
     return;
   }
 
-  if (args.command !== 'dev' && args.command !== 'build' && args.command !== 'publish') {
+  if (args.command !== 'dev' && args.command !== 'build' && args.command !== 'publish' && args.command !== 'check') {
     throw new Error(`Unknown command: ${args.command}`);
   }
   if (args.captureResponseIp && args.command !== 'build') throw new Error('--capture-response-ip applies only to local build responses; configure the publish server separately.');
@@ -97,8 +98,16 @@ export async function runCli(argv: string[]): Promise<void> {
   }
 
   if (args.singleHtml && args.command !== 'build') throw new Error('--single-html is supported only by build.');
-  if (args.singleHtml && args.waitForResponse) throw new Error('--single-html cannot use --wait-for-response: file:// has no response server.');
+  if (args.singleHtml && (args.waitForResponse || args.serveResponses)) throw new Error('--single-html cannot serve or wait for responses: file:// has no response server.');
   const report = await loadReport(args.reportDir);
+  if (args.command === 'check') {
+    printDiagnostics(await checkReport(report));
+    return;
+  }
+  if (args.command === 'build') {
+    const diagnostics = await checkReport(report);
+    if (diagnostics.length) printDiagnostics(diagnostics);
+  }
   if (args.singleHtml) {
     const output = await buildSingleHtml(report, args.outDir ?? path.join(report.reportDir, 'brief.html'), args.colorMode);
     console.log('Briefkit single HTML build complete');
@@ -699,6 +708,7 @@ function printHelp(): void {
 Usage:
   briefkit dev [report-dir] [--port 4311] [--no-open] [--color-mode auto|light|dark]
   briefkit build [report-dir] [--out ./brief] [--single-html --out ./brief.html] [--wait-for-response|--serve-responses] [--port 4311] [--no-open] [--color-mode auto|light|dark]
+  briefkit check [report-dir]
   briefkit publish [report-dir] [--wait-for-response] [--no-open] [--duration 90d|3mo|1y|forever] [--indexed|--no-indexed] [--target https://briefs.example.com] [--api-key KEY] [--color-mode auto|light|dark]
   briefkit responses <slug-or-url> [--target URL --api-key KEY]
   briefkit responses <revision-id> --local
