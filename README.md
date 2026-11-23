@@ -254,6 +254,8 @@ Durations support `d`, `w`, `mo`, `y`, and `forever`. If `--duration` is omitted
 
 Indexing controls whether a brief appears on the server homepage. If neither `--indexed` nor `--no-indexed` is supplied, the server decides using `BRIEFKIT_DEFAULT_INDEXED`; if that is also unset, the server indexes briefs.
 
+Publishing the same title with the same API key replaces its static files at the existing URL; see [replacement and ownership rules](docs/replacement-publishing.md) for legacy briefs and key rotation.
+
 Expired briefs return 404 and are deleted by the server cleanup loop. Briefs set to `forever` can be removed with `briefkit unpublish`.
 
 ## Quick start: plain Markdown

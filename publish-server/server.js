@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { exposePublishedBrief, publisherFingerprint, recoverInterruptedReplacements, withTitleLock } from './replacement.js';
 
 const storageDir = process.env.BRIEFKIT_STORAGE_DIR || '/briefs';
 const domain = normalizeDomain(process.env.BRIEFKIT_DOMAIN || process.env.DOMAIN || 'http://localhost:8080');
@@ -24,6 +25,7 @@ if (apiKeys.size === 0) {
 await fs.mkdir(storageDir, { recursive: true });
 await fs.mkdir(responseStorageDir, { recursive: true, mode: 0o700 });
 await cleanupInternalStorageEntries();
+await recoverInterruptedReplacements(storageDir);
 await cleanupExpiredBriefs();
 await cleanupExpiredResponseChannels();
 setInterval(() => cleanupExpiredBriefs().catch((error) => console.error(error)), 60 * 60 * 1000).unref();
@@ -53,7 +55,7 @@ const server = http.createServer(async (request, response) => {
     }
     await serveStaticFile(request, response);
   } catch (error) {
-    if (error instanceof HttpError) {
+    if (error instanceof HttpError || error?.status === 409) {
       sendJson(response, error.status, { error: error.message });
       return;
     }
@@ -73,7 +75,8 @@ async function handlePublish(request, response) {
   }
 
   const publishRequest = await parsePublishRequest(request);
-  const slug = await publishStagedBrief(publishRequest);
+  const apiKey = request.headers['x-api-key'] || request.headers.authorization?.slice(7);
+  const slug = await publishStagedBrief(publishRequest, publisherFingerprint(apiKey));
 
   sendJson(response, 201, { url: `${domain}/${slug}/`, slug, expiresAt: publishRequest.expiresAt });
 }
@@ -242,11 +245,24 @@ async function parsePublishRequest(request) {
   return { title, requestedDuration, expiresAt, indexed, files };
 }
 
-async function publishStagedBrief(publishRequest) {
+async function publishStagedBrief(publishRequest, fingerprint) {
   const stagingDir = await createStagingDir();
   try {
     await writeStagedFiles(stagingDir, publishRequest.files);
-    const slug = await exposeStagedBrief(stagingDir, publishRequest);
+    const slug = await exposePublishedBrief({
+      storageDir,
+      stagingDir,
+      baseSlug: slugify(publishRequest.title),
+      fingerprint,
+      metadata: {
+        title: publishRequest.title,
+        baseSlug: slugify(publishRequest.title),
+        createdAt: new Date().toISOString(),
+        expiresAt: publishRequest.expiresAt,
+        duration: publishRequest.requestedDuration,
+        indexed: publishRequest.indexed,
+      },
+    });
     return slug;
   } catch (error) {
     await fs.rm(stagingDir, { recursive: true, force: true });
@@ -266,48 +282,6 @@ async function writeStagedFiles(stagingDir, files) {
     const destination = path.join(stagingDir, file.path);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.writeFile(destination, file.content);
-  }
-}
-
-async function exposeStagedBrief(stagingDir, publishRequest) {
-  const baseSlug = slugify(publishRequest.title);
-  let suffix = 1;
-  while (true) {
-    const slug = suffix === 1 ? baseSlug : `${baseSlug}-${suffix}`;
-    const lockDir = path.join(storageDir, `.briefkit-lock-${slug}`);
-    if (!(await tryCreateLock(lockDir))) {
-      suffix += 1;
-      continue;
-    }
-    try {
-      if (await exists(path.join(storageDir, slug))) {
-        suffix += 1;
-        continue;
-      }
-      const metadata = {
-        title: publishRequest.title,
-        slug,
-        createdAt: new Date().toISOString(),
-        expiresAt: publishRequest.expiresAt,
-        duration: publishRequest.requestedDuration,
-        indexed: publishRequest.indexed,
-      };
-      await fs.writeFile(path.join(stagingDir, '.briefkit.json'), JSON.stringify(metadata, null, 2));
-      await fs.rename(stagingDir, path.join(storageDir, slug));
-      return slug;
-    } finally {
-      await removeInternalEntryQuietly(lockDir);
-    }
-  }
-}
-
-async function tryCreateLock(lockDir) {
-  try {
-    await fs.mkdir(lockDir, { recursive: false, mode: 0o700 });
-    return true;
-  } catch (error) {
-    if (error?.code === 'EEXIST') return false;
-    throw error;
   }
 }
 
@@ -337,7 +311,19 @@ async function handleDelete(request, response) {
     return;
   }
 
-  await fs.rm(briefDir, { recursive: true, force: true });
+  const metadata = await readMetadata(briefDir);
+  const baseSlug = typeof metadata?.baseSlug === 'string' ? metadata.baseSlug : slugify(metadata?.title || slug);
+  const deleted = await withTitleLock(storageDir, baseSlug, async () => {
+    if (!(await statOrUndefined(briefDir))?.isDirectory()) return false;
+    const current = await readMetadata(briefDir);
+    const apiKey = request.headers['x-api-key'] || request.headers.authorization?.slice(7);
+    if (current?.publisherFingerprint && current.publisherFingerprint !== publisherFingerprint(apiKey)) {
+      throw new HttpError(403, 'Brief belongs to a different publisher');
+    }
+    await fs.rm(briefDir, { recursive: true, force: true });
+    return true;
+  });
+  if (!deleted) throw new HttpError(404, 'Brief not found');
   sendJson(response, 200, { deleted: true, slug });
 }
 
@@ -532,11 +518,15 @@ async function cleanupExpiredResponseChannels() {
 async function cleanupExpiredBriefs() {
   const entries = await fs.readdir(storageDir, { withFileTypes: true });
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || isInternalStorageName(entry.name)) continue;
     const briefDir = path.join(storageDir, entry.name);
     const metadata = await readMetadata(briefDir);
     if (metadata && isExpired(metadata.expiresAt)) {
-      await fs.rm(briefDir, { recursive: true, force: true });
+      const baseSlug = typeof metadata.baseSlug === 'string' ? metadata.baseSlug : slugify(metadata.title || entry.name);
+      await withTitleLock(storageDir, baseSlug, async () => {
+        const current = await readMetadata(briefDir);
+        if (current && isExpired(current.expiresAt)) await fs.rm(briefDir, { recursive: true, force: true });
+      });
     }
   }
 }

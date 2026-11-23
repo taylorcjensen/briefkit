@@ -85,7 +85,7 @@ test('publish API accepts empty file contents and publishes through direct acces
   }
 });
 
-test('concurrent same-title publishes get distinct complete briefs without mixed files', async () => {
+test('concurrent same-title publishes by one publisher replace at the canonical URL', async () => {
   const server = await startPublishServer('concurrent');
   try {
     const requests = Array.from({ length: 6 }, (_unused, index) => ({
@@ -96,16 +96,13 @@ test('concurrent same-title publishes get distinct complete briefs without mixed
     const results = await Promise.all(requests.map((payload) => postJson(server.origin, payload, apiKey)));
     assert(results.every((result) => result.status === 201), results.map((result) => result.text).join('\n'));
     const slugs = results.map((result) => result.json.slug as string);
-    assert.equal(new Set(slugs).size, requests.length);
-
-    for (const [index, slug] of slugs.entries()) {
-      const indexResponse = await fetch(`${server.origin}/${slug}/`);
-      const assetResponse = await fetch(`${server.origin}/${slug}/assets/data.txt`);
-      assert.equal(indexResponse.status, 200);
-      assert.equal(assetResponse.status, 200);
-      assert.equal(await indexResponse.text(), `brief ${index}`);
-      assert.equal(await assetResponse.text(), `asset ${index}`);
-    }
+    assert.deepEqual(new Set(slugs), new Set(['same-title']));
+    const indexResponse = await fetch(`${server.origin}/same-title/`);
+    const assetResponse = await fetch(`${server.origin}/same-title/assets/data.txt`);
+    assert.equal(indexResponse.status, 200);
+    assert.equal(assetResponse.status, 200);
+    const index = Number((await indexResponse.text()).replace('brief ', ''));
+    assert.equal(await assetResponse.text(), `asset ${index}`);
   } finally {
     await server.stop();
   }
